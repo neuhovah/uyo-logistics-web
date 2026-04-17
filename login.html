@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Access | Uyo Logistics Intelligence</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-900 text-white font-sans flex items-center justify-center h-screen bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
+    
+    <div class="bg-gray-800 p-8 md:p-10 rounded-2xl border border-gray-700 shadow-2xl w-[90%] max-w-md z-10 relative">
+        <div class="text-center mb-8">
+            <h1 class="text-2xl font-black text-blue-400 uppercase tracking-tighter">UYO LOGISTICS</h1>
+            <p class="text-xs text-gray-400 uppercase tracking-widest mt-1">Command Center Access</p>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
+                    <i class="fa-solid fa-key text-blue-400 mr-1"></i> Corporate License Key
+                </label>
+                <input type="password" id="license-key" class="w-full bg-gray-900 text-white px-4 py-3 rounded-lg border border-gray-600 outline-none focus:border-blue-500 transition placeholder-gray-600 tracking-widest text-center font-mono" placeholder="XXXX-XXXX-XXXX">
+                <p class="text-[9px] text-gray-500 text-center mt-2">Enter the authorization key provided by your system administrator.</p>
+            </div>
+
+            <div id="error-message" class="text-red-400 text-xs font-bold text-center hidden bg-red-900/30 p-2 rounded border border-red-800"></div>
+
+            <div class="pt-2">
+                <button id="login-btn" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg shadow-lg transition-colors flex justify-center items-center gap-2">
+                    Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="mt-6 text-center border-t border-gray-700 pt-5">
+            <p class="text-gray-400 text-[10px] mb-2 tracking-wide uppercase">Don't have a Corporate License?</p>
+            <button onclick="requestTrial()" type="button" class="text-blue-400 hover:text-blue-300 font-bold text-xs uppercase tracking-wider transition-colors outline-none flex items-center justify-center gap-1 mx-auto">
+                <i class="fa-solid fa-unlock-keyhole"></i> Request 24-Hour Trial Key
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- TARGET LOCK: Hardcoded to point directly to the live Render Backend API ---
+        const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
+
+        const errorDiv = document.getElementById('error-message');
+        const loginBtn = document.getElementById('login-btn');
+
+        function showError(message) {
+            errorDiv.innerText = message;
+            errorDiv.classList.remove('hidden');
+            loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
+            loginBtn.disabled = false;
+        }
+
+        async function handleLogin() {
+            const key = document.getElementById('license-key').value.trim();
+
+            if (!key) {
+                showError("Please enter a License Key.");
+                return;
+            }
+
+            // UI Feedback
+            errorDiv.classList.add('hidden');
+            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Authenticating...`;
+            loginBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-license-key': key
+                    },
+                    body: JSON.stringify({}) // Empty payload intentionally
+                });
+
+                if (response.status === 401) {
+                    throw new Error("Invalid License Key. Access Denied.");
+                } else if (response.status === 402) {
+                    throw new Error("This License Key has expired. Contact Billing.");
+                } 
+                // A 400 or 422 means the key bypassed the security Gatekeeper perfectly, 
+                // but failed payload validation (which we expect because we sent an empty body!)
+                else if (response.status === 400 || response.status === 422 || response.ok) {
+                    // SUCCESS! The gatekeeper accepted the key.
+                    localStorage.setItem('uyo_license_key', key);
+                    window.location.href = "index.html";
+                } else {
+                    throw new Error(`Server communication error. Status: ${response.status}`);
+                }
+
+            } catch (err) {
+                showError(err.message);
+            }
+        }
+
+        // NEW: Trial Generation Logic with Validation Shield
+        async function requestTrial() {
+            const userEmail = prompt("Enter your business email to receive your 24-Hour Trial Key:");
+            
+            // 1. Check if they hit cancel or left it blank
+            if (!userEmail) return;
+
+            // 2. Basic Regex Email Validation Shield
+            const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailPattern.test(userEmail.trim())) {
+                alert("⚠️ Please enter a valid email address.");
+                return; // Stops the function from hitting your server with junk data
+            }
+
+            const originalBtnText = loginBtn.innerHTML;
+            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Key...`;
+            loginBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/customers/generate-trial`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userEmail.trim() })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    alert(`✅ Trial Activated!\n\nYour 24-Hour License Key is:\n${data.license_key}\n\nPlease save this key. We will now auto-initialize your dashboard.`);
+                    
+                    const inputField = document.getElementById('license-key');
+                    if (inputField) {
+                        inputField.type = "text"; // Unmask the password field temporarily
+                        inputField.value = data.license_key;
+                        inputField.style.color = "#10b981"; // Turn text green
+                        inputField.style.borderColor = "#10b981";
+                    }
+
+                    loginBtn.innerText = "Key Accepted. Booting System...";
+                    loginBtn.style.backgroundColor = "#10b981"; 
+
+                    localStorage.setItem('uyo_license_key', data.license_key);
+                    
+                    setTimeout(() => {
+                        window.location.href = "index.html"; 
+                    }, 1800);
+
+                } else {
+                    alert("⚠️ Could not generate trial. Please try again later.");
+                    loginBtn.innerHTML = originalBtnText;
+                    loginBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error("Trial Generation Error:", error);
+                alert("Network error. Please check your connection.");
+                loginBtn.innerHTML = originalBtnText;
+                loginBtn.disabled = false;
+            }
+        }
+
+        document.getElementById('login-btn').addEventListener('click', handleLogin);
+        
+        // Allow pressing Enter to submit
+        document.getElementById('license-key').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                handleLogin();
+            }
+        });
+    </script>
+</body>
+</html>
