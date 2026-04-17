@@ -72,50 +72,37 @@
 
         async function handleLogin() {
             const key = keyInput.value.trim();
-            if (!key) {
-                showError("Please enter a License Key.");
-                return;
-            }
+            if (!key) return showError("Please enter a License Key.");
 
             errorDiv.classList.add('hidden');
-            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Authenticating...`;
+            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Verifying...`;
             loginBtn.disabled = true;
 
             try {
-                const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, {
+                // Pointing to the NEW dedicated verification gate
+                const response = await fetch(`${API_BASE_URL}/api/vrp/verify-key`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-license-key': key },
-                    body: JSON.stringify({
-                        depot: { lat: 5.03, lon: 7.92 },
-                        deliveries: [],
-                        fleet: []
-                    })
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'x-license-key': key 
+                    }
                 });
 
-                // Status 400/422 is fine here; it means the key is VALID but the payload (empty deliveries) is just rejected by the solver.
-                if (response.ok || response.status === 400 || response.status === 422) {
-                    
-                    // --- REINFORCED STORAGE LOGIC ---
+                if (response.ok) {
+                    // Force save to local storage
                     localStorage.setItem('uyo_license_key', key);
                     
-                    // Immediate Verification Check
-                    const verifyKey = localStorage.getItem('uyo_license_key');
-                    
-                    if (verifyKey === key) {
-                        console.log("Storage Verified. Booting Index...");
-                        window.location.href = "index.html";
+                    // Verify the save worked
+                    if (localStorage.getItem('uyo_license_key') === key) {
+                        console.log("Storage Verified. Redirecting...");
+                        window.location.replace("index.html");
                     } else {
-                        throw new Error("Local Storage write failed. Check browser settings.");
+                        throw new Error("Storage failure. Please disable Private Mode.");
                     }
-
-                } else if (response.status === 401) {
-                    throw new Error("Invalid License Key. Access Denied.");
-                } else if (response.status === 402) {
-                    throw new Error("This License Key has expired.");
                 } else {
-                    throw new Error("Server communication error.");
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || "Access Denied");
                 }
-
             } catch (err) {
                 showError(err.message);
             }
