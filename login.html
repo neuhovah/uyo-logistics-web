@@ -75,18 +75,21 @@
                         'Content-Type': 'application/json',
                         'x-license-key': key
                     },
-                    body: JSON.stringify({}) // Empty payload intentionally
+                    // THE PATCH: Send a valid structural payload so FastAPI bypasses 
+                    // the 422 error and is forced to verify the key in Supabase.
+                    body: JSON.stringify({
+                        depot: { lat: 5.03, lon: 7.92 },
+                        deliveries: [],
+                        fleet: []
+                    })
                 });
 
                 if (response.status === 401) {
                     throw new Error("Invalid License Key. Access Denied.");
                 } else if (response.status === 402) {
                     throw new Error("This License Key has expired. Contact Billing.");
-                } 
-                // A 400 or 422 means the key bypassed the security Gatekeeper perfectly, 
-                // but failed payload validation (which we expect because we sent an empty body!)
-                else if (response.status === 400 || response.status === 422 || response.ok) {
-                    // SUCCESS! The gatekeeper accepted the key.
+                } else if (response.ok || response.status === 400) {
+                    // SUCCESS! The gatekeeper checked Supabase and verified the key.
                     localStorage.setItem('uyo_license_key', key);
                     window.location.href = "index.html";
                 } else {
