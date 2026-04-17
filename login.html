@@ -101,22 +101,20 @@
             }
         }
 
-        // NEW: Trial Generation Logic with Validation Shield
+        // NEW: Tier 2 Void Drop Logic
         async function requestTrial() {
             const userEmail = prompt("Enter your business email to receive your 24-Hour Trial Key:");
             
-            // 1. Check if they hit cancel or left it blank
             if (!userEmail) return;
 
-            // 2. Basic Regex Email Validation Shield
             const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             if (!emailPattern.test(userEmail.trim())) {
                 alert("⚠️ Please enter a valid email address.");
-                return; // Stops the function from hitting your server with junk data
+                return; 
             }
 
             const originalBtnText = loginBtn.innerHTML;
-            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Key...`;
+            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Dispatching Key...`;
             loginBtn.disabled = true;
 
             try {
@@ -127,29 +125,17 @@
                 });
 
                 if (response.ok) {
-                    const data = await response.json();
+                    // THE PATCH: We no longer auto-fill or auto-redirect. We tell them to check their inbox.
+                    alert(`📩 KEY DISPATCHED!\n\nWe have generated a 24-Hour License Key for:\n${userEmail}\n\nPlease check your email inbox (and spam folder) to retrieve your access key.`);
                     
-                    alert(`✅ Trial Activated!\n\nYour 24-Hour License Key is:\n${data.license_key}\n\nPlease save this key. We will now auto-initialize your dashboard.`);
+                    loginBtn.innerText = "Check your email to proceed";
+                    loginBtn.style.backgroundColor = "#3b82f6"; 
                     
-                    const inputField = document.getElementById('license-key');
-                    if (inputField) {
-                        inputField.type = "text"; // Unmask the password field temporarily
-                        inputField.value = data.license_key;
-                        inputField.style.color = "#10b981"; // Turn text green
-                        inputField.style.borderColor = "#10b981";
-                    }
-
-                    loginBtn.innerText = "Key Accepted. Booting System...";
-                    loginBtn.style.backgroundColor = "#10b981"; 
-
-                    localStorage.setItem('uyo_license_key', data.license_key);
-                    
-                    setTimeout(() => {
-                        window.location.href = "index.html"; 
-                    }, 1800);
+                    // Do not redirect. Wait for them to copy the key from their email and paste it.
 
                 } else {
-                    alert("⚠️ Could not generate trial. Please try again later.");
+                    const errData = await response.json().catch(() => ({}));
+                    alert(`⚠️ Action Denied: ${errData.detail || "Could not generate trial."}`);
                     loginBtn.innerHTML = originalBtnText;
                     loginBtn.disabled = false;
                 }
