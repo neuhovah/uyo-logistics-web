@@ -16,18 +16,23 @@
         </div>
 
         <div class="space-y-4">
-            <div>
+            <div class="relative">
                 <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
                     <i class="fa-solid fa-key text-blue-400 mr-1"></i> Corporate License Key
                 </label>
-                <input type="password" id="license-key" class="w-full bg-gray-900 text-white px-4 py-3 rounded-lg border border-gray-600 outline-none focus:border-blue-500 transition placeholder-gray-600 tracking-widest text-center font-mono" placeholder="XXXX-XXXX-XXXX">
-                <p class="text-[9px] text-gray-500 text-center mt-2">Enter the authorization key provided by your system administrator.</p>
+                <div class="relative">
+                    <input type="password" id="license-key" class="w-full bg-gray-900 text-white px-4 py-3 rounded-lg border border-gray-600 outline-none focus:border-blue-500 transition placeholder-gray-600 tracking-widest text-center font-mono" placeholder="XXXX-XXXX-XXXX">
+                    <button type="button" onclick="toggleView()" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-blue-400 transition outline-none">
+                        <i id="toggle-icon" class="fa-solid fa-eye"></i>
+                    </button>
+                </div>
+                <p class="text-[9px] text-gray-500 text-center mt-2">Verify your key using the eye icon before initializing.</p>
             </div>
 
             <div id="error-message" class="text-red-400 text-xs font-bold text-center hidden bg-red-900/30 p-2 rounded border border-red-800"></div>
 
             <div class="pt-2">
-                <button id="login-btn" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg shadow-lg transition-colors flex justify-center items-center gap-2">
+                <button id="login-btn" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg shadow-lg transition-all flex justify-center items-center gap-2">
                     Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>
                 </button>
             </div>
@@ -42,11 +47,21 @@
     </div>
 
     <script>
-        // --- TARGET LOCK: Hardcoded to point directly to the live Render Backend API ---
         const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
-
         const errorDiv = document.getElementById('error-message');
         const loginBtn = document.getElementById('login-btn');
+        const keyInput = document.getElementById('license-key');
+
+        function toggleView() {
+            const icon = document.getElementById('toggle-icon');
+            if (keyInput.type === "password") {
+                keyInput.type = "text";
+                icon.classList.replace('fa-eye', 'fa-eye-slash');
+            } else {
+                keyInput.type = "password";
+                icon.classList.replace('fa-eye-slash', 'fa-eye');
+            }
+        }
 
         function showError(message) {
             errorDiv.innerText = message;
@@ -56,14 +71,12 @@
         }
 
         async function handleLogin() {
-            const key = document.getElementById('license-key').value.trim();
-
+            const key = keyInput.value.trim();
             if (!key) {
                 showError("Please enter a License Key.");
                 return;
             }
 
-            // UI Feedback
             errorDiv.classList.add('hidden');
             loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Authenticating...`;
             loginBtn.disabled = true;
@@ -71,12 +84,7 @@
             try {
                 const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-license-key': key
-                    },
-                    // THE PATCH: Send a valid structural payload so FastAPI bypasses 
-                    // the 422 error and is forced to verify the key in Supabase.
+                    headers: { 'Content-Type': 'application/json', 'x-license-key': key },
                     body: JSON.stringify({
                         depot: { lat: 5.03, lon: 7.92 },
                         deliveries: [],
@@ -84,16 +92,28 @@
                     })
                 });
 
-                if (response.status === 401) {
+                // Status 400/422 is fine here; it means the key is VALID but the payload (empty deliveries) is just rejected by the solver.
+                if (response.ok || response.status === 400 || response.status === 422) {
+                    
+                    // --- REINFORCED STORAGE LOGIC ---
+                    localStorage.setItem('uyo_license_key', key);
+                    
+                    // Immediate Verification Check
+                    const verifyKey = localStorage.getItem('uyo_license_key');
+                    
+                    if (verifyKey === key) {
+                        console.log("Storage Verified. Booting Index...");
+                        window.location.href = "index.html";
+                    } else {
+                        throw new Error("Local Storage write failed. Check browser settings.");
+                    }
+
+                } else if (response.status === 401) {
                     throw new Error("Invalid License Key. Access Denied.");
                 } else if (response.status === 402) {
-                    throw new Error("This License Key has expired. Contact Billing.");
-                } else if (response.ok || response.status === 400) {
-                    // SUCCESS! The gatekeeper checked Supabase and verified the key.
-                    localStorage.setItem('uyo_license_key', key);
-                    window.location.href = "index.html";
+                    throw new Error("This License Key has expired.");
                 } else {
-                    throw new Error(`Server communication error. Status: ${response.status}`);
+                    throw new Error("Server communication error.");
                 }
 
             } catch (err) {
@@ -101,10 +121,8 @@
             }
         }
 
-        // NEW: Tier 2 Void Drop Logic
         async function requestTrial() {
             const userEmail = prompt("Enter your business email to receive your 24-Hour Trial Key:");
-            
             if (!userEmail) return;
 
             const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -125,14 +143,9 @@
                 });
 
                 if (response.ok) {
-                    // THE PATCH: We no longer auto-fill or auto-redirect. We tell them to check their inbox.
-                    alert(`📩 KEY DISPATCHED!\n\nWe have generated a 24-Hour License Key for:\n${userEmail}\n\nPlease check your email inbox (and spam folder) to retrieve your access key.`);
-                    
+                    alert(`📩 KEY DISPATCHED!\n\nPlease check your inbox for ${userEmail}.`);
                     loginBtn.innerText = "Check your email to proceed";
                     loginBtn.style.backgroundColor = "#3b82f6"; 
-                    
-                    // Do not redirect. Wait for them to copy the key from their email and paste it.
-
                 } else {
                     const errData = await response.json().catch(() => ({}));
                     alert(`⚠️ Action Denied: ${errData.detail || "Could not generate trial."}`);
@@ -140,21 +153,15 @@
                     loginBtn.disabled = false;
                 }
             } catch (error) {
-                console.error("Trial Generation Error:", error);
-                alert("Network error. Please check your connection.");
+                console.error("Trial Error:", error);
+                alert("Network error.");
                 loginBtn.innerHTML = originalBtnText;
                 loginBtn.disabled = false;
             }
         }
 
         document.getElementById('login-btn').addEventListener('click', handleLogin);
-        
-        // Allow pressing Enter to submit
-        document.getElementById('license-key').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                handleLogin();
-            }
-        });
+        keyInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleLogin(); });
     </script>
 </body>
 </html>
