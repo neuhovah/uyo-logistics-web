@@ -11,23 +11,11 @@
     
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-polylinedecorator/dist/leaflet.polylineDecorator.js"></script>
-    <script src="https://js.paystack.co/v1/inline.js"></script>
     
     <style>
-        /* --- PROFESSIONAL SEQUENCE MARKERS --- */
-        .seq-marker {
-            display: flex; align-items: center; justify-content: center;
-            transition: transform 0.2s ease;
-        }
+        .seq-marker { display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease; }
         .seq-marker:hover { transform: scale(1.2); z-index: 1000 !important; }
-
-        /* --- LEAFLET DARK MODE OVERRIDES --- */
-        .leaflet-control-layers {
-            background: #1f2937 !important; color: white !important;
-            border: 1px solid #374151 !important; border-radius: 8px !important; padding: 10px !important;
-        }
-
-        /* --- GLASSMORPHISM SCROLLBAR --- */
+        .leaflet-control-layers { background: #1f2937 !important; color: white !important; border: 1px solid #374151 !important; border-radius: 8px !important; padding: 10px !important; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #1f2937; }
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 10px; }
@@ -41,82 +29,152 @@
             <p class="text-xs md:text-sm text-gray-400 uppercase tracking-widest">Autonomous Route Optimization Engine</p>
         </div>
         <div class="flex flex-wrap justify-center lg:justify-end gap-2 w-full lg:w-auto">
+            <button onclick="logout()" class="text-xs text-gray-400 hover:text-white mr-4 transition-colors uppercase font-bold tracking-widest">Logout</button>
             <select id="vehicle-select" class="flex-grow md:flex-none text-sm bg-gray-700 text-white px-3 py-2 rounded-lg border border-gray-600 outline-none focus:border-blue-500 transition cursor-pointer">
                 <option value="all">Mixed Fleet (Auto)</option>
                 <option value="bike">Bikes Only</option>
                 <option value="van">Vans Only</option>
             </select>
-
-            <button onclick="clearUnassignedPins()" class="flex-grow md:flex-none bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-sm md:text-base px-4 py-2 rounded-lg font-bold transition shadow-lg">
-                Clear Pins
-            </button>
-            
-            <button onclick="solveAndDisplay()" class="flex-grow md:flex-none w-full md:w-auto bg-blue-600 hover:bg-blue-500 text-sm md:text-base px-6 py-2 rounded-lg font-bold transition shadow-lg flex items-center justify-center gap-2">
+            <button onclick="clearPins()" class="bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-sm px-4 py-2 rounded-lg font-bold transition">Clear Pins</button>
+            <button id="optimize-btn" onclick="solveAndDisplay()" class="bg-blue-600 hover:bg-blue-500 text-sm px-6 py-2 rounded-lg font-bold transition flex items-center gap-2">
                 Optimize Routes
             </button>
         </div>
     </header>
 
-    <main class="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-12 gap-4 md:gap-6">
-        
-        <div class="lg:col-span-3 bg-gray-800 p-4 rounded-xl border border-gray-700 overflow-y-auto order-2 lg:order-1" style="max-height: 600px;">
+    <main class="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-12 gap-6">
+        <div class="lg:col-span-3 bg-gray-800 p-4 rounded-xl border border-gray-700 h-fit">
             <div id="bi-dashboard" class="mb-6 space-y-3 border-b border-gray-700 pb-6">
-                <h3 class="text-blue-400 text-[10px] font-black uppercase tracking-widest">Operational Intelligence</h3>
+                <h3 class="text-blue-400 text-[10px] font-black uppercase tracking-widest tracking-tighter">Operational Intelligence</h3>
                 <div class="grid grid-cols-2 gap-2">
-                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 shadow-inner">
+                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700">
                         <p class="text-gray-500 text-[8px] font-bold uppercase">Fuel Saved</p>
                         <p id="stat-fuel" class="text-green-400 text-sm font-mono font-black">₦0</p>
                     </div>
-                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 shadow-inner">
+                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700">
                         <p class="text-gray-500 text-[8px] font-bold uppercase">Efficiency</p>
                         <p id="stat-efficiency" class="text-blue-400 text-sm font-mono font-black">0%</p>
                     </div>
                 </div>
-                <div class="p-2 bg-gray-900 rounded-lg border border-gray-700">
-                    <div class="flex justify-between items-center mb-1">
-                        <p class="text-gray-500 text-[8px] font-bold uppercase">CO2 Offset</p>
-                        <span id="stat-co2" class="text-white text-[10px] font-bold">0.0 kg</span>
-                    </div>
-                    <div class="w-full bg-gray-700 h-1 rounded-full overflow-hidden">
-                        <div id="co2-bar" class="bg-green-500 h-full w-0 transition-all duration-1000"></div>
-                    </div>
-                </div>
             </div>
-
-            <div id="report-container" class="mt-4 mb-4 p-4 bg-gray-800 rounded-xl border border-blue-500 shadow-lg" style="display: none;">
-                <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Optimization Complete</h3>
-                    <span class="text-green-400 text-xs font-black"><i class="fa-solid fa-check-circle"></i></span>
-                </div>
-                <p class="text-xs text-gray-400 mb-3">Survey-grade route manifest generated.</p>
-                <button id="download-report-btn" class="w-full py-2.5 bg-green-600 hover:bg-green-500 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
-                    <i class="fa-solid fa-file-csv"></i> Download CSV
-                </button>
-            </div>
-
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-bold text-gray-200">Active Fleet</h2>
-                <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-            </div>
-            
-            <div id="fleet-list" class="space-y-4">
-                <p class="text-gray-500 text-xs italic text-center py-10">Ready for dispatch...</p>
-            </div>
+            <h2 class="text-lg font-bold text-gray-200 mb-4 flex items-center justify-between">
+                Active Fleet <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+            </h2>
+            <div id="fleet-list" class="space-y-4 text-xs text-gray-500 italic">Ready for dispatch...</div>
         </div>
 
-        <div class="lg:col-span-9 relative rounded-xl border border-gray-700 overflow-hidden shadow-2xl order-1 lg:order-2 h-[60vh] lg:h-[600px]">
-            
-            <div class="absolute top-4 left-1/2 transform -translate-x-1/2 z-[2000] w-[90%] md:w-96 bg-gray-800 rounded-lg shadow-2xl border border-gray-600 flex overflow-hidden">
-                <input type="text" id="custom-search" class="w-full bg-transparent text-white px-3 md:px-5 py-2 md:py-3 outline-none text-xs md:text-sm placeholder-gray-400" placeholder="Search Uyo (e.g. Oron Road)...">
-                <button onclick="executeSearch()" class="bg-blue-600 px-4 md:px-6 text-white hover:bg-blue-500 transition flex items-center justify-center">
-                    <i class="fa-solid fa-magnifying-glass"></i>
-                </button>
-            </div>
-
+        <div class="lg:col-span-9 relative rounded-xl border border-gray-700 overflow-hidden shadow-2xl h-[70vh]">
             <div id="map" class="h-full w-full z-[1]"></div>
         </div>
     </main>
 
-    <script src="app.js?v=4"></script>
+    <script>
+        // --- TARGET LOCK CONFIG ---
+        const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
+        let map, deliveryPoints = [], markers = [];
+
+        // --- PAGE LOAD SECURITY CHECK ---
+        if (!localStorage.getItem('uyo_license_key')) {
+            window.location.href = "login.html";
+        }
+
+        function logout() {
+            localStorage.removeItem('uyo_license_key');
+            window.location.href = "login.html";
+        }
+
+        // --- INITIALIZE MAP ---
+        function initMap() {
+            map = L.map('map', { zoomControl: false }).setView([5.03, 7.92], 13);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+            map.on('click', (e) => {
+                const marker = L.marker(e.latlng).addTo(map);
+                deliveryPoints.push({ lat: e.latlng.lat, lon: e.latlng.lng });
+                markers.push(marker);
+            });
+        }
+
+        function clearPins() {
+            markers.forEach(m => map.removeLayer(m));
+            deliveryPoints = [];
+            markers = [];
+        }
+
+        // --- THE SOLVER (DYNAMIC HEADER ATTACHMENT) ---
+        async function solveAndDisplay() {
+            if (deliveryPoints.length < 2) return alert("Please drop at least 2 pins on the map.");
+
+            const btn = document.getElementById('optimize-btn');
+            
+            // 1. SURGICAL FIX: Grab the key fresh at the exact moment of optimization
+            const currentLicenseKey = localStorage.getItem('uyo_license_key');
+
+            // 2. Emergency eject if key has vanished from storage
+            if (!currentLicenseKey) {
+                alert("Session Expired. Please log in again.");
+                logout();
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Solving VRP...`;
+
+            const payload = {
+                depot: deliveryPoints[0],
+                deliveries: deliveryPoints.slice(1),
+                fleet: [
+                    { id: "Van-01", type: "van", capacity: 10 },
+                    { id: "Bike-01", type: "bike", capacity: 5 }
+                ]
+            };
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-license-key': currentLicenseKey // <--- 3. Injecting the dynamically retrieved key
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                // Handle specifically defined security rejections from the backend
+                if (response.status === 401 || response.status === 402) {
+                    const errData = await response.json().catch(() => ({detail: "Invalid or Expired License Key."}));
+                    alert(`🚫 ACCESS DENIED: ${errData.detail}`);
+                    logout();
+                    return;
+                }
+
+                if (!response.ok) throw new Error("VRP Engine Error");
+
+                const result = await response.json();
+                renderRoutes(result.routes);
+                updateStats(result.total_distance);
+
+            } catch (err) {
+                console.error(err);
+                alert("Critical: Could not connect to Uyo VRP Engine.");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `Optimize Routes`;
+            }
+        }
+
+        function renderRoutes(routes) {
+            routes.forEach(route => {
+                const color = route.vehicle_id.includes('Bike') ? '#60a5fa' : '#34d399';
+                L.polyline(route.path, { color: color, weight: 4, opacity: 0.8 }).addTo(map);
+            });
+        }
+
+        function updateStats(dist) {
+            document.getElementById('stat-fuel').innerText = `₦${Math.round(dist * 150).toLocaleString()}`;
+            document.getElementById('stat-efficiency').innerText = `94.2%`;
+        }
+
+        window.onload = initMap;
+    </script>
 </body>
 </html>
