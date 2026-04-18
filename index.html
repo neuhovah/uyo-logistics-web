@@ -57,6 +57,18 @@
                     </div>
                 </div>
             </div>
+            
+            <div id="report-container" class="mt-4 mb-4 p-4 bg-gray-800 rounded-xl border border-blue-500 shadow-lg" style="display: none;">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Optimization Complete</h3>
+                    <span class="text-green-400 text-xs font-black"><i class="fa-solid fa-check-circle"></i></span>
+                </div>
+                <p class="text-xs text-gray-400 mb-3">Survey-grade route manifest generated.</p>
+                <button id="download-report-btn" class="w-full py-2.5 bg-green-600 hover:bg-green-500 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-file-csv"></i> Download CSV
+                </button>
+            </div>
+
             <h2 class="text-lg font-bold text-gray-200 mb-4 flex items-center justify-between">
                 Active Fleet <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
             </h2>
@@ -64,16 +76,20 @@
         </div>
 
         <div class="lg:col-span-9 relative rounded-xl border border-gray-700 overflow-hidden shadow-2xl h-[70vh]">
+            
+            <div class="absolute top-4 left-1/2 transform -translate-x-1/2 z-[2000] w-[90%] md:w-96 bg-gray-800 rounded-lg shadow-2xl border border-gray-600 flex overflow-hidden">
+                <input type="text" id="custom-search" class="w-full bg-transparent text-white px-3 md:px-5 py-2 md:py-3 outline-none text-xs md:text-sm placeholder-gray-400" placeholder="Search Uyo (e.g. Oron Road)...">
+                <button onclick="executeSearch()" class="bg-blue-600 px-4 md:px-6 text-white hover:bg-blue-500 transition flex items-center justify-center">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                </button>
+            </div>
+
             <div id="map" class="h-full w-full z-[1]"></div>
         </div>
     </main>
 
     <script>
-        // --- TARGET LOCK CONFIG ---
-        const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
-        let map, deliveryPoints = [], markers = [];
-
-        // --- PAGE LOAD SECURITY CHECK ---
+        // Ensure the user cannot bypass the login screen
         if (!localStorage.getItem('uyo_license_key')) {
             window.location.href = "login.html";
         }
@@ -82,99 +98,8 @@
             localStorage.removeItem('uyo_license_key');
             window.location.href = "login.html";
         }
-
-        // --- INITIALIZE MAP ---
-        function initMap() {
-            map = L.map('map', { zoomControl: false }).setView([5.03, 7.92], 13);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-
-            map.on('click', (e) => {
-                const marker = L.marker(e.latlng).addTo(map);
-                deliveryPoints.push({ lat: e.latlng.lat, lon: e.latlng.lng });
-                markers.push(marker);
-            });
-        }
-
-        function clearPins() {
-            markers.forEach(m => map.removeLayer(m));
-            deliveryPoints = [];
-            markers = [];
-        }
-
-        // --- THE SOLVER (DYNAMIC HEADER ATTACHMENT) ---
-        async function solveAndDisplay() {
-            if (deliveryPoints.length < 2) return alert("Please drop at least 2 pins on the map.");
-
-            const btn = document.getElementById('optimize-btn');
-            
-            // 1. SURGICAL FIX: Grab the key fresh at the exact moment of optimization
-            const currentLicenseKey = localStorage.getItem('uyo_license_key');
-
-            // 2. Emergency eject if key has vanished from storage
-            if (!currentLicenseKey) {
-                alert("Session Expired. Please log in again.");
-                logout();
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Solving VRP...`;
-
-            const payload = {
-                depot: deliveryPoints[0],
-                deliveries: deliveryPoints.slice(1),
-                fleet: [
-                    { id: "Van-01", type: "van", capacity: 10 },
-                    { id: "Bike-01", type: "bike", capacity: 5 }
-                ]
-            };
-
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-license-key': currentLicenseKey // <--- 3. Injecting the dynamically retrieved key
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                // Handle specifically defined security rejections from the backend
-                if (response.status === 401 || response.status === 402) {
-                    const errData = await response.json().catch(() => ({detail: "Invalid or Expired License Key."}));
-                    alert(`🚫 ACCESS DENIED: ${errData.detail}`);
-                    logout();
-                    return;
-                }
-
-                if (!response.ok) throw new Error("VRP Engine Error");
-
-                const result = await response.json();
-                renderRoutes(result.routes);
-                updateStats(result.total_distance);
-
-            } catch (err) {
-                console.error(err);
-                alert("Critical: Could not connect to Uyo VRP Engine.");
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = `Optimize Routes`;
-            }
-        }
-
-        function renderRoutes(routes) {
-            routes.forEach(route => {
-                const color = route.vehicle_id.includes('Bike') ? '#60a5fa' : '#34d399';
-                L.polyline(route.path, { color: color, weight: 4, opacity: 0.8 }).addTo(map);
-            });
-        }
-
-        function updateStats(dist) {
-            document.getElementById('stat-fuel').innerText = `₦${Math.round(dist * 150).toLocaleString()}`;
-            document.getElementById('stat-efficiency').innerText = `94.2%`;
-        }
-
-        window.onload = initMap;
     </script>
+    
+    <script src="app.js?v=6"></script> 
 </body>
 </html>

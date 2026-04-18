@@ -13,7 +13,6 @@ if (!activeLicenseKey) {
 }
 
 // --- DYNAMIC INFRASTRUCTURE CONFIG (CLOUD-READY) ---
-// TARGET LOCK: Hardcoded to point directly to the live Render Backend API
 const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
 const WS_BASE_URL = "wss://uyo-routing-engine.onrender.com";
 
@@ -148,7 +147,7 @@ map.on('click', function(e) {
 });
 
 // --- 7. NATIVE SEARCH BAR ENGINE ---
-async function executeSearch() {
+window.executeSearch = async function() {
     const query = document.getElementById('custom-search').value.trim();
     if (!query) return;
 
@@ -178,11 +177,11 @@ async function executeSearch() {
         document.getElementById('custom-search').value = ""; 
 
     } catch (err) { console.error("Search failed", err); alert("Search engine temporarily disconnected."); }
-}
+};
 
-document.getElementById("custom-search").addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); executeSearch(); } });
+document.getElementById("custom-search").addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); window.executeSearch(); } });
 
-function clearUnassignedPins() { 
+window.clearUnassignedPins = function() { 
     unassignedPinsLayer.clearLayers(); 
     routeLayerGroup.clearLayers(); 
     dynamicDeliveries = []; 
@@ -194,20 +193,21 @@ function clearUnassignedPins() {
     
     const reportContainer = document.getElementById("report-container");
     if (reportContainer) reportContainer.style.display = "none";
-}
+};
 
 // --- 8. DUAL-SERVER REDUNDANCY & CRASH TRAPPING ---
-async function solveAndDisplay() {
+window.solveAndDisplay = async function() {
     if (dynamicDeliveries.length === 0) { alert("Drop pins or search for locations first!"); return; }
     
-    if (!activeLicenseKey) {
+    const currentLicenseKey = localStorage.getItem('uyo_license_key');
+    if (!currentLicenseKey) {
         alert("Session expired. Please log in again.");
         window.location.href = "login.html";
         return;
     }
 
     const vehicleChoice = document.getElementById('vehicle-select').value;
-    const btn = document.querySelector('button[onclick="solveAndDisplay()"]');
+    const btn = document.getElementById('optimize-btn');
     
     const fleetProfiles = {
         bike: [
@@ -222,13 +222,14 @@ async function solveAndDisplay() {
     let activeFleet = (vehicleChoice === 'all') ? [...fleetProfiles.bike, ...fleetProfiles.van] : fleetProfiles[vehicleChoice];
     
     try {
-        btn.innerHTML = "Optimizing Engine..."; btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Optimizing Engine...`; 
+        btn.disabled = true;
         
         const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, { 
             method: 'POST', 
             headers: { 
                 'Content-Type': 'application/json',
-                'x-license-key': activeLicenseKey 
+                'x-license-key': currentLicenseKey // <-- CRITICAL: Security Handshake
             }, 
             body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }) 
         });
@@ -236,7 +237,6 @@ async function solveAndDisplay() {
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             if (response.status === 402) {
-                // Modified: Now calls the tiered subscription logic
                 if(confirm(`💳 PAYMENT REQUIRED:\n\n${errorData.detail || 'Access restricted.'}\n\nWould you like to renew your subscription now?`)) {
                     initiateSubscriptionRenewal();
                 }
@@ -277,8 +277,11 @@ async function solveAndDisplay() {
 
     } catch (error) { 
         alert(`Routing Failed!\n\n${error.message}`); console.error(error);
-    } finally { btn.innerHTML = "Optimize Routes"; btn.disabled = false; }
-}
+    } finally { 
+        btn.innerHTML = "Optimize Routes"; 
+        btn.disabled = false; 
+    }
+};
 
 async function renderRoutes(routes, payload) {
     const fleetList = document.getElementById('fleet-list');
@@ -391,7 +394,7 @@ let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
 async function fetchLifetimeMetrics() {
     try {
         const response = await fetch(`${API_BASE_URL}/api/vrp/history`, {
-            headers: { 'x-license-key': activeLicenseKey }
+            headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
         });
         if (response.ok) {
             const data = await response.json();
@@ -445,7 +448,7 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'x-license-key': activeLicenseKey
+                    'x-license-key': localStorage.getItem('uyo_license_key')
                 },
                 body: JSON.stringify({ vehicle_id: vehicleId, route_coords: coords })
             });
@@ -528,7 +531,7 @@ function connectLiveFleet() {
 }
 
 // --- 12. TIERED REVENUE ENGINE (PAYSTACK) ---
-async function initiateSubscriptionRenewal() {
+window.initiateSubscriptionRenewal = async function() {
     const planChoice = prompt(
         "💳 SELECT YOUR PLAN:\n\n" +
         "1. Daily Pass - ₦3,000\n" +
@@ -554,7 +557,7 @@ async function initiateSubscriptionRenewal() {
     if (!userEmail) return;
 
     const handler = PaystackPop.setup({
-        key: 'pk_test_c84a971d6679a03491b013d7cb2a51b8cc1bbebd', // REMEMBER: Replace with your actual Live Key from Paystack Dashboard
+        key: 'pk_test_c84a971d6679a03491b013d7cb2a51b8cc1bbebd',
         email: userEmail,
         amount: amountKobo,
         currency: "NGN",
@@ -565,7 +568,7 @@ async function initiateSubscriptionRenewal() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     reference: response.reference, 
-                    license_key: activeLicenseKey,
+                    license_key: localStorage.getItem('uyo_license_key'),
                     days_to_add: daysToAdd 
                 })
             });
@@ -582,4 +585,4 @@ async function initiateSubscriptionRenewal() {
         }
     });
     handler.openIframe();
-}
+};
