@@ -439,14 +439,17 @@ function updateBIMetrics(optimizedKm, unoptimizedKm = 0) {
         manualDistance = optimizedKm * 1.35; 
     }
     
-    // Safety check: In rare mathematical anomalies, ensure the unoptimized route isn't shorter than the optimized one
+    // Safety check: In rare mathematical anomalies, ensure the unoptimized route isnt shorter than the optimized one
     if (manualDistance < optimizedKm && optimizedKm > 0) {
         manualDistance = optimizedKm * 1.05; 
     }
 
     const kmSaved = optimizedKm > 0 ? (manualDistance - optimizedKm) : 0;
-    const currentFuelSaved = (kmSaved / 10) * 1200; 
-    const currentCo2Saved = (kmSaved / 10) * 2.3;
+    
+    // 🔬 SURVEY-GRADE URBAN FUEL MODEL
+    // City delivery vans navigating traffic & idling average ~6 km/L (not 10 km/L)
+    const currentFuelSaved = (kmSaved / 6) * 1200; 
+    const currentCo2Saved = (kmSaved / 6) * 2.3; 
     const sessionEfficiency = optimizedKm > 0 ? ((kmSaved / manualDistance) * 100) : 0;
     
     // DOM Element Targets
