@@ -447,17 +447,53 @@ function updateBIMetrics(optimizedKm, unoptimizedKm = 0) {
     const kmSaved = optimizedKm > 0 ? (manualDistance - optimizedKm) : 0;
     const currentFuelSaved = (kmSaved / 10) * 1200; 
     const currentCo2Saved = (kmSaved / 10) * 2.3;
-    
-    // 🔬 ACADEMIC PROTOCOL: True Empirical Efficiency Calculation
     const sessionEfficiency = optimizedKm > 0 ? ((kmSaved / manualDistance) * 100) : 0;
     
-    const displayFuel = lifetimeStats.fuel + currentFuelSaved;
-    const displayCo2 = lifetimeStats.co2 + currentCo2Saved;
-    const displayEff = optimizedKm > 0 ? sessionEfficiency : lifetimeStats.efficiency;
+    // DOM Element Targets
+    const statFuelEl = document.getElementById('stat-fuel');
+    const statEffEl = document.getElementById('stat-efficiency');
+    const statCo2El = document.getElementById('stat-co2');
+
+    if (optimizedKm > 0) {
+        // 🔄 STATE B: PREVIEW MODE (Display Session Stats)
+        if (statFuelEl) {
+            statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
+            statFuelEl.innerText = `₦${Math.floor(currentFuelSaved).toLocaleString()}`;
+            statFuelEl.style.color = "#fbbf24"; // UX Alert: Yellow
+        }
+        if (statEffEl) {
+            statEffEl.previousElementSibling.innerText = "Session Efficiency";
+            statEffEl.innerText = `${sessionEfficiency.toFixed(1)}%`;
+            statEffEl.style.color = "#fbbf24";
+        }
+        if (statCo2El) {
+            statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
+            statCo2El.innerText = `${currentCo2Saved.toFixed(1)} kg`;
+            statCo2El.style.color = "#fbbf24";
+        }
+    } else {
+        // 🌍 STATE A: IDLE MODE (Display Lifetime Stats)
+        if (statFuelEl) {
+            statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
+            statFuelEl.innerText = `₦${Math.floor(lifetimeStats.fuel).toLocaleString()}`;
+            statFuelEl.style.color = "#4ade80"; // UX Default: Green
+        }
+        if (statEffEl) {
+            statEffEl.previousElementSibling.innerText = "Avg Efficiency";
+            statEffEl.innerText = `${lifetimeStats.efficiency.toFixed(1)}%`;
+            statEffEl.style.color = "#60a5fa"; // UX Default: Blue
+        }
+        if (statCo2El) {
+            statCo2El.previousElementSibling.innerText = "Lifetime CO2";
+            statCo2El.innerText = `${lifetimeStats.co2.toFixed(1)} kg`;
+            statCo2El.style.color = "#f87171"; // UX Default: Red
+        }
+    }
     
-    if (document.getElementById('stat-fuel')) document.getElementById('stat-fuel').innerText = `₦${Math.floor(displayFuel).toLocaleString()}`;
-    if (document.getElementById('stat-efficiency')) document.getElementById('stat-efficiency').innerText = `${displayEff.toFixed(1)}%`;
-    if (document.getElementById('stat-co2')) document.getElementById('stat-co2').innerText = `${displayCo2.toFixed(1)} kg`;
+    if (document.getElementById('co2-bar')) { 
+        const displayEff = optimizedKm > 0 ? sessionEfficiency : lifetimeStats.efficiency;
+        document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
+    }
 }
 
 fetchLifetimeMetrics();
@@ -494,7 +530,10 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             
             if (response.ok) {
                 console.log(`✅ Mission Deploy Success: ${vehicleId}`);
+                
+                // Fetch new lifetime stats and reset the UI
                 setTimeout(fetchLifetimeMetrics, 1500);
+                setTimeout(window.clearUnassignedPins, 2000); // Cleans the map after deployment
 
                 if (confirm("✅ Mission Active! Would you like to hand off this route to the Driver via WhatsApp?")) {
                     window.open(whatsappLink, '_blank');
