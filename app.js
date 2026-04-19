@@ -520,9 +520,31 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             if (response.ok) {
                 console.log(`✅ Mission Deploy Success: ${vehicleId}`);
                 
-                // Fetch new lifetime stats and reset the UI
+                // Fetch new lifetime stats to update the revenue engine
                 setTimeout(fetchLifetimeMetrics, 1500);
-                setTimeout(window.clearUnassignedPins, 2000); // Cleans the map after deployment
+
+                // 🔬 SURVEY-GRADE FIX: Do NOT call clearUnassignedPins() here!
+                // Instead, we only clear the raw white drop pins, leaving the colored route intact.
+                unassignedPinsLayer.clearLayers();
+                dynamicDeliveries = [];
+
+                // Force the Live Operations telemetry socket to wake up
+                if (!map.hasLayer(routeLayerGroup)) {
+                    map.addLayer(routeLayerGroup); // This triggers the map 'overlayadd' event
+                } else if (!liveFleetSocket) {
+                    connectLiveFleet(); // Manually connect if the layer was already active
+                }
+
+                // Update the UI button to show it is now in a "Live" state
+                const btns = document.querySelectorAll('button');
+                btns.forEach(btn => {
+                    if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
+                        btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
+                        btn.style.backgroundColor = "#166534"; // Dark green indicating active status
+                        btn.style.cursor = "not-allowed";
+                        btn.disabled = true;
+                    }
+                });
 
                 if (confirm("✅ Mission Active! Would you like to hand off this route to the Driver via WhatsApp?")) {
                     window.open(whatsappLink, '_blank');
