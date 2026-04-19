@@ -224,15 +224,12 @@ window.solveAndDisplay = async function() {
     try {
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Optimizing Engine...`; 
         btn.disabled = true;
-        
-        // 🔬 ACADEMIC PROTOCOL: Calculate Order-of-Entry baseline BEFORE clearing pins
-        window.currentUnoptimizedKm = await getUnoptimizedDistance(depotLocation, dynamicDeliveries);
 
         const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, { 
             method: 'POST', 
             headers: { 
                 'Content-Type': 'application/json',
-                'x-license-key': currentLicenseKey // <-- CRITICAL: Security Handshake
+                'x-license-key': currentLicenseKey
             }, 
             body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }) 
         });
@@ -257,6 +254,16 @@ window.solveAndDisplay = async function() {
         routeLayerGroup.clearLayers(); 
         unassignedPinsLayer.clearLayers();
         window.activeDeployments = {}; 
+
+        // 🔬 ACADEMIC PROTOCOL: Capture the exact pgRouting time metrics from the backend (Single Source of Truth)
+        let backendOptimizedMins = 0;
+        data.routes.forEach(r => {
+            if (r.route && r.route.length > 2) {
+                backendOptimizedMins += (r.total_time_mins || 0);
+            }
+        });
+        window.currentMissionMins = backendOptimizedMins;
+        window.currentBaselineMins = data.empirical_baseline || 0;
         
         if (data.report_url) {
             const reportContainer = document.getElementById("report-container");
@@ -301,8 +308,6 @@ async function renderRoutes(routes, payload) {
         locDict[d.id] = [d.lat, d.lon];
     });
 
-    let totalMissionDistance = 0;
-
     for (const r of routes) {
         const dropsCount = r.route ? r.route.length - 2 : 0;
         if (dropsCount <= 0) continue; 
@@ -346,7 +351,6 @@ async function renderRoutes(routes, payload) {
             if (osrmData && osrmData.code === "Ok") {
                 const distanceKm = parseFloat((osrmData.routes[0].distance / 1000).toFixed(2));
                 const durationMin = (osrmData.routes[0].duration / 60).toFixed(1);
-                totalMissionDistance += distanceKm;
 
                 const routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
                 window.activeDeployments[vId] = routeCoords;
@@ -388,33 +392,12 @@ async function renderRoutes(routes, payload) {
             console.error("Complete Network Failure. Deploying Direct Lines.", e);
         }
     }
-    updateBIMetrics(totalMissionDistance, window.currentUnoptimizedKm);
+    // Force frontend dashboard to use Backend Time Math for parity with CSV
+    updateBIMetrics(window.currentMissionMins, window.currentBaselineMins);
 }
 
-// --- 9. BI ENGINES (Dynamic Empirical Calculations) ---
+// --- 9. BI ENGINES (Synchronized Backend Math) ---
 let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
-
-async function getUnoptimizedDistance(depot, deliveries) {
-    // Generates the raw, unoptimized 'Order-of-Entry' route driving distance
-    if (!deliveries || deliveries.length === 0) return 0;
-    
-    const coords = [[depot.lon, depot.lat]];
-    deliveries.forEach(d => coords.push([d.lon, d.lat]));
-    coords.push([depot.lon, depot.lat]); // Return to base
-    
-    const coordStr = coords.map(c => `${c[0]},${c[1]}`).join(';');
-    
-    try {
-        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=false`);
-        if (res.ok) {
-            const data = await res.json();
-            return data.routes[0].distance / 1000; // Convert to KM
-        }
-    } catch (e) {
-        console.warn("Dynamic baseline calculation failed. Falling back to heuristic.");
-    }
-    return 0;
-}
 
 async function fetchLifetimeMetrics() {
     try {
@@ -431,38 +414,41 @@ async function fetchLifetimeMetrics() {
     } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
 }
 
-function updateBIMetrics(optimizedKm, unoptimizedKm = 0) {
-    let manualDistance = unoptimizedKm;
+function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
+    let manualTimeEst = unoptimizedMins;
     
-    // Safety check: Fallback to heuristic only if OSRM failed the baseline calculation
-    if (!manualDistance || manualDistance === 0) {
-        manualDistance = optimizedKm * 1.35; 
+    // Safety check: Fallback to heuristic if matrix empirical baseline failed
+    if (!manualTimeEst || manualTimeEst === 0) {
+        manualTimeEst = optimizedMins * 1.35; 
     }
     
-    // Safety check: In rare mathematical anomalies, ensure the unoptimized route isnt shorter than the optimized one
-    if (manualDistance < optimizedKm && optimizedKm > 0) {
-        manualDistance = optimizedKm * 1.05; 
+    // Safety check: Algorithmic anomaly trapping
+    if (manualTimeEst < optimizedMins && optimizedMins > 0) {
+        manualTimeEst = optimizedMins * 1.05; 
     }
 
-    const kmSaved = optimizedKm > 0 ? (manualDistance - optimizedKm) : 0;
+    const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
     
-    // 🔬 SURVEY-GRADE URBAN FUEL MODEL
-    // City delivery vans navigating traffic & idling average ~6 km/L (not 10 km/L)
-    const currentFuelSaved = (kmSaved / 6) * 1200; 
-    const currentCo2Saved = (kmSaved / 6) * 2.3; 
-    const sessionEfficiency = optimizedKm > 0 ? ((kmSaved / manualDistance) * 100) : 0;
+    // 🔬 SURVEY-GRADE URBAN FUEL MODEL (Mirrors export_utils.py exactly)
+    // Assume Uyo urban average speed is 20 km/h -> Distance (km) = Time (mins) * 0.333
+    const distanceSavedKm = timeSaved * 0.333;
+    
+    // Urban delivery fuel economy is ~6 km per Liter. Fuel price: ₦1,200/L
+    const currentFuelSaved = (distanceSavedKm / 6) * 1200; 
+    const currentCo2Saved = (distanceSavedKm / 6) * 2.3; 
+    const sessionEfficiency = optimizedMins > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
     
     // DOM Element Targets
     const statFuelEl = document.getElementById('stat-fuel');
     const statEffEl = document.getElementById('stat-efficiency');
     const statCo2El = document.getElementById('stat-co2');
 
-    if (optimizedKm > 0) {
+    if (optimizedMins > 0) {
         // 🔄 STATE B: PREVIEW MODE (Display Session Stats)
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
             statFuelEl.innerText = `₦${Math.floor(currentFuelSaved).toLocaleString()}`;
-            statFuelEl.style.color = "#fbbf24"; // UX Alert: Yellow
+            statFuelEl.style.color = "#fbbf24"; 
         }
         if (statEffEl) {
             statEffEl.previousElementSibling.innerText = "Session Efficiency";
@@ -471,7 +457,7 @@ function updateBIMetrics(optimizedKm, unoptimizedKm = 0) {
         }
         if (statCo2El) {
             statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-            statCo2El.innerText = `${currentCo2Saved.toFixed(1)} kg`;
+            statCo2El.innerText = `${currentCo2Saved.toFixed(2)} kg`;
             statCo2El.style.color = "#fbbf24";
         }
     } else {
@@ -479,22 +465,22 @@ function updateBIMetrics(optimizedKm, unoptimizedKm = 0) {
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
             statFuelEl.innerText = `₦${Math.floor(lifetimeStats.fuel).toLocaleString()}`;
-            statFuelEl.style.color = "#4ade80"; // UX Default: Green
+            statFuelEl.style.color = "#4ade80"; 
         }
         if (statEffEl) {
             statEffEl.previousElementSibling.innerText = "Avg Efficiency";
             statEffEl.innerText = `${lifetimeStats.efficiency.toFixed(1)}%`;
-            statEffEl.style.color = "#60a5fa"; // UX Default: Blue
+            statEffEl.style.color = "#60a5fa"; 
         }
         if (statCo2El) {
             statCo2El.previousElementSibling.innerText = "Lifetime CO2";
             statCo2El.innerText = `${lifetimeStats.co2.toFixed(1)} kg`;
-            statCo2El.style.color = "#f87171"; // UX Default: Red
+            statCo2El.style.color = "#f87171"; 
         }
     }
     
     if (document.getElementById('co2-bar')) { 
-        const displayEff = optimizedKm > 0 ? sessionEfficiency : lifetimeStats.efficiency;
+        const displayEff = optimizedMins > 0 ? sessionEfficiency : lifetimeStats.efficiency;
         document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
     }
 }
