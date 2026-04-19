@@ -35,7 +35,7 @@
                 <option value="bike">Bikes Only</option>
                 <option value="van">Vans Only</option>
             </select>
-            <button onclick="clearPins()" class="bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-sm px-4 py-2 rounded-lg font-bold transition">Clear Pins</button>
+            <button onclick="clearUnassignedPins()" class="bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-sm px-4 py-2 rounded-lg font-bold transition">Clear Pins</button>
             <button id="optimize-btn" onclick="solveAndDisplay()" class="bg-blue-600 hover:bg-blue-500 text-sm px-6 py-2 rounded-lg font-bold transition flex items-center gap-2">
                 Optimize Routes
             </button>
@@ -46,14 +46,18 @@
         <div class="lg:col-span-3 bg-gray-800 p-4 rounded-xl border border-gray-700 h-fit">
             <div id="bi-dashboard" class="mb-6 space-y-3 border-b border-gray-700 pb-6">
                 <h3 class="text-blue-400 text-[10px] font-black uppercase tracking-widest tracking-tighter">Operational Intelligence</h3>
-                <div class="grid grid-cols-2 gap-2">
-                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700">
-                        <p class="text-gray-500 text-[8px] font-bold uppercase">Fuel Saved</p>
-                        <p id="stat-fuel" class="text-green-400 text-sm font-mono font-black">₦0</p>
+                <div class="grid grid-cols-3 gap-1.5">
+                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 text-center">
+                        <p class="text-gray-500 text-[7px] font-bold uppercase">Fuel Saved</p>
+                        <p id="stat-fuel" class="text-green-400 text-[11px] font-mono font-black">₦0</p>
                     </div>
-                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700">
-                        <p class="text-gray-500 text-[8px] font-bold uppercase">Efficiency</p>
-                        <p id="stat-efficiency" class="text-blue-400 text-sm font-mono font-black">0%</p>
+                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 text-center">
+                        <p class="text-gray-500 text-[7px] font-bold uppercase">Efficiency</p>
+                        <p id="stat-efficiency" class="text-blue-400 text-[11px] font-mono font-black">0%</p>
+                    </div>
+                    <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 text-center">
+                        <p class="text-gray-500 text-[7px] font-bold uppercase">CO2 Saved</p>
+                        <p id="stat-co2" class="text-red-400 text-[11px] font-mono font-black">0 kg</p>
                     </div>
                 </div>
             </div>
@@ -100,6 +104,6 @@
         }
     </script>
     
-    <script src="app.js?v=6"></script> 
+    <script src="app.js?v=7"></script> 
 </body>
 </html>
