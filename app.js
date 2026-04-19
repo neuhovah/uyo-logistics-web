@@ -499,9 +499,46 @@ map.on('overlayremove', function(e) {
 
 function connectLiveFleet() {
     liveFleetSocket = new WebSocket(`${WS_BASE_URL}/ws/live-fleet`);
-    liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected"); };
-    liveFleetSocket.onmessage = function(event) {
+    liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
+    
+    liveFleetSocket.onmessage = async function(event) {
         const data = JSON.parse(event.data);
+        
+        // --- 🌐 THE GLOBAL MULTI-DISPATCHER SYNC ---
+        // If we see a telemetry ping, but we don't have the route lines drawn locally...
+        if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
+            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
+            try {
+                // Fetch the route geometry from the backend RAM
+                const syncRes = await fetch(`${API_BASE_URL}/api/vrp/active-missions`, {
+                    headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
+                });
+                const syncData = await syncRes.json();
+                
+                // If the backend has the coordinates, draw the route instantly
+                if (syncData.active_missions && syncData.active_missions[data.vehicle_id]) {
+                    const coords = syncData.active_missions[data.vehicle_id].coords;
+                    
+                    // Draw a dashed orange line to indicate a route deployed by ANOTHER dispatcher
+                    L.polyline(coords, { 
+                        color: '#f59e0b', 
+                        weight: 4, 
+                        opacity: 0.8, 
+                        dashArray: '10, 10', 
+                        pane: 'routePane' 
+                    }).addTo(routeLayerGroup);
+                    
+                    // Save to local memory so we don't fetch it again
+                    window.activeDeployments[data.vehicle_id] = coords;
+                    console.log(`✅ Global Sync Complete: Route drawn for ${data.vehicle_id}`);
+                }
+            } catch (err) {
+                console.warn("Global Sync Failed:", err);
+            }
+        }
+        // -------------------------------------------
+
+        // Process the Live Pings (Red Dots)
         if (liveMarkers[data.vehicle_id]) {
             liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
         } else {
@@ -513,6 +550,8 @@ function connectLiveFleet() {
             });
             liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {icon: icon, pane: 'poiPane'}).addTo(map);
         }
+        
+        // Handle Deviation Alerts
         if (data.deviation_alert) {
             const el = liveMarkers[data.vehicle_id].getElement().firstChild;
             el.style.background = '#f97316'; 
@@ -525,7 +564,10 @@ function connectLiveFleet() {
             el.style.boxShadow = '0 0 15px #ef4444';
             el.style.border = '2.5px solid white';
         }
-        if (data.status === 'completed') { console.log(`🏁 Mission Completed for ${data.vehicle_id}`); }
+        
+        if (data.status === 'completed') { 
+            console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+        }
     };
     liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
 }
