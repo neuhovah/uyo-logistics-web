@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Uyo Logistics | Driver Mission</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #0f172a; color: white; font-family: 'Inter', sans-serif; }
+        .status-pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen p-6">
+
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-2xl font-black tracking-tighter text-blue-500">UYO LOGISTICS</h1>
+            <p class="text-xs text-gray-400 uppercase tracking-widest">Driver Mission Interface</p>
+        </div>
+        <div id="connection-status" class="w-3 h-3 bg-red-500 rounded-full status-pulse"></div>
+    </div>
+
+    <div class="bg-gray-800 rounded-3xl p-6 shadow-2xl border border-gray-700 mb-6">
+        <div class="flex justify-between items-start mb-4">
+            <h2 id="vehicle-id" class="text-xl font-bold text-gray-100">---</h2>
+            <span class="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-1 rounded font-bold">ACTIVE MISSION</span>
+        </div>
+        
+        <div class="space-y-4 mb-6">
+            <div class="flex items-center gap-4">
+                <i class="fa-solid fa-location-crosshairs text-gray-500"></i>
+                <div>
+                    <p class="text-[10px] text-gray-500 uppercase font-bold">Telemetry Status</p>
+                    <p id="telemetry-log" class="text-sm font-mono">Waiting for GPS...</p>
+                </div>
+            </div>
+        </div>
+
+        <button onclick="startNavigation()" class="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3">
+            <i class="fa-solid fa-map-location-dot"></i>
+            START NAVIGATION
+        </button>
+    </div>
+
+    <div class="mt-auto bg-blue-900/20 border border-blue-800/30 p-4 rounded-2xl">
+        <p class="text-xs text-blue-300 leading-relaxed">
+            <i class="fa-solid fa-circle-info mr-2"></i>
+            Keep this page open in the background. Closing this tab will stop live tracking for the Command Center.
+        </p>
+    </div>
+
+    <script>
+        const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
+        const urlParams = new URLSearchParams(window.location.search);
+        const vehicleId = urlParams.get('v') || "UNKNOWN-VEH";
+        const gmapsUrl = urlParams.get('map') || "#";
+
+        document.getElementById('vehicle-id').innerText = vehicleId;
+
+        function startNavigation() {
+            window.open(decodeURIComponent(gmapsUrl), '_blank');
+            startTracking();
+        }
+
+        function startTracking() {
+            if ("geolocation" in navigator) {
+                document.getElementById('connection-status').classList.replace('bg-red-500', 'bg-green-500');
+                
+                navigator.geolocation.watchPosition(async (position) => {
+                    const payload = {
+                        vehicle_id: vehicleId,
+                        lat: position.coords.latitude,
+                        lon: position.coords.longitude
+                    };
+
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/telemetry/update`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (response.ok) {
+                            document.getElementById('telemetry-log').innerText = `📡 Ping: ${payload.lat.toFixed(4)}, ${payload.lon.toFixed(4)}`;
+                            console.log("Telemetry Synced");
+                        }
+                    } catch (err) {
+                        console.error("Sync Failed", err);
+                    }
+                }, (error) => {
+                    alert("GPS Error: Please enable location permissions.");
+                }, {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                });
+            }
+        }
+    </script>
+</body>
+</html>
