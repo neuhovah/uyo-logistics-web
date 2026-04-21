@@ -52,6 +52,17 @@
         const loginBtn = document.getElementById('login-btn');
         const keyInput = document.getElementById('license-key');
 
+        // --- NEW: REACTIVE UI OBSERVER ---
+        // Automatically unlocks the button as soon as the user starts typing or pastes a key
+        keyInput.addEventListener('input', () => {
+            if (loginBtn.innerText === "Check your email to proceed" || loginBtn.disabled) {
+                loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
+                loginBtn.disabled = false;
+                loginBtn.style.backgroundColor = ""; // Reset to default blue-600 from CSS
+                errorDiv.classList.add('hidden');
+            }
+        });
+
         function toggleView() {
             const icon = document.getElementById('toggle-icon');
             if (keyInput.type === "password") {
@@ -79,7 +90,6 @@
             loginBtn.disabled = true;
 
             try {
-                // Pointing to the NEW dedicated verification gate
                 const response = await fetch(`${API_BASE_URL}/api/vrp/verify-key`, {
                     method: 'POST',
                     headers: { 
@@ -89,10 +99,7 @@
                 });
 
                 if (response.ok) {
-                    // Force save to local storage
                     localStorage.setItem('uyo_license_key', key);
-                    
-                    // Verify the save worked
                     if (localStorage.getItem('uyo_license_key') === key) {
                         console.log("Storage Verified. Redirecting...");
                         window.location.replace("index.html");
@@ -119,7 +126,7 @@
             }
 
             const originalBtnText = loginBtn.innerHTML;
-            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Dispatching Key...`;
+            loginBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Dispatching...`;
             loginBtn.disabled = true;
 
             try {
@@ -132,7 +139,8 @@
                 if (response.ok) {
                     alert(`📩 KEY DISPATCHED!\n\nPlease check your inbox for ${userEmail}.`);
                     loginBtn.innerText = "Check your email to proceed";
-                    loginBtn.style.backgroundColor = "#3b82f6"; 
+                    loginBtn.disabled = true; // Briefly disable until they type the key
+                    loginBtn.style.backgroundColor = "#1e293b"; // Dim to gray-800 to signal "Waiting"
                 } else {
                     const errData = await response.json().catch(() => ({}));
                     alert(`⚠️ Action Denied: ${errData.detail || "Could not generate trial."}`);
@@ -147,7 +155,7 @@
             }
         }
 
-        document.getElementById('login-btn').addEventListener('click', handleLogin);
+        loginBtn.addEventListener('click', handleLogin);
         keyInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleLogin(); });
     </script>
 </body>
