@@ -505,66 +505,68 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
     const userChoice = confirm(
         `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
         `This will initiate live tracking and record the mission.\n\n` +
-        `Click OK to deploy. You will then be asked if you want to hand off the route to the driver via WhatsApp.`
+        `Click OK to deploy.`
     );
 
-    if (userChoice) {
-        try {
-            const coords = window.activeDeployments[vehicleId];
-            if (!coords) throw new Error("Route coordinates missing from memory.");
+    if (!userChoice) return;
+
+    // 🛑 POPUP BLOCKER BYPASS: Ask for preference and open tab immediately
+    const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
+    
+    // Open a blank tab NOW while we still have the browser's "trusted click" permission
+    const newTab = window.open('about:blank', '_blank');
+
+    try {
+        const coords = window.activeDeployments[vehicleId];
+        if (!coords) throw new Error("Route coordinates missing from memory.");
+        
+        const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-license-key': localStorage.getItem('uyo_license_key')
+            },
+            body: JSON.stringify({ vehicle_id: vehicleId, route_coords: coords })
+        });
+        
+        if (response.ok) {
+            console.log(`✅ Mission Deploy Success: ${vehicleId}`);
             
-            const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'x-license-key': localStorage.getItem('uyo_license_key')
-                },
-                body: JSON.stringify({ vehicle_id: vehicleId, route_coords: coords })
-            });
-            
-            if (response.ok) {
-                console.log(`✅ Mission Deploy Success: ${vehicleId}`);
-                
-                // Fetch new lifetime stats to update the revenue engine
-                setTimeout(fetchLifetimeMetrics, 1500);
+            setTimeout(fetchLifetimeMetrics, 1500);
+            unassignedPinsLayer.clearLayers();
 
-                // 🔬 SURVEY-GRADE FIX: Do NOT call clearUnassignedPins() here!
-                // Instead, we only clear the raw white drop pins, leaving the colored route intact.
-                unassignedPinsLayer.clearLayers();
-                // dynamicDeliveries = []; // Kept commented out here or managed carefully so Recalculate can still access remaining drops if needed
-
-                // Force the Live Operations telemetry socket to wake up
-                if (!map.hasLayer(routeLayerGroup)) {
-                    map.addLayer(routeLayerGroup); // This triggers the map 'overlayadd' event
-                } else if (!liveFleetSocket) {
-                    connectLiveFleet(); // Manually connect if the layer was already active
-                }
-
-                // Update the UI button to show it is now in a "Live" state
-                const btns = document.querySelectorAll('button');
-                btns.forEach(btn => {
-                    if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
-                        btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
-                        btn.style.backgroundColor = "#166534"; // Dark green indicating active status
-                        btn.style.cursor = "not-allowed";
-                        btn.disabled = true;
-                    }
-                });
-
-                if (confirm("✅ Mission Active! Would you like to hand off this route to the Driver via WhatsApp?")) {
-                    window.open(whatsappLink, '_blank');
-                } else {
-                    // Fallback to open the driver portal directly on the dispatcher's device for testing
-                    window.open(trackingUrl, '_blank');
-                }
-            } else {
-                const errData = await response.json().catch(() => ({}));
-                throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
+            if (!map.hasLayer(routeLayerGroup)) {
+                map.addLayer(routeLayerGroup); 
+            } else if (!liveFleetSocket) {
+                connectLiveFleet(); 
             }
-        } catch (err) {
-            console.error("Deployment Error:", err);
-            alert(`❌ Deployment Failed!\n\n${err.message}`);
+
+            const btns = document.querySelectorAll('button');
+            btns.forEach(btn => {
+                if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
+                    btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
+                    btn.style.backgroundColor = "#166534"; 
+                    btn.style.cursor = "not-allowed";
+                    btn.disabled = true;
+                }
+            });
+
+            // 🎯 Success! Redirect the pre-opened tab to the actual URL
+            if (newTab) {
+                newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
+            }
+
+        } else {
+            // Close the tab if the server failed
+            if (newTab) newTab.close(); 
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
         }
+    } catch (err) {
+        // Close the tab if there was a network error
+        if (newTab) newTab.close(); 
+        console.error("Deployment Error:", err);
+        alert(`❌ Deployment Failed!\n\n${err.message}`);
     }
 };
 
