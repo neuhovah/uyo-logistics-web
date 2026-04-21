@@ -13,10 +13,11 @@ if (!activeLicenseKey) {
 }
 
 // --- DYNAMIC INFRASTRUCTURE CONFIG (CLOUD-READY) ---
-const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
-const WS_BASE_URL = "wss://uyo-routing-engine.onrender.com";
+// Swapped to Production Domains
+const API_BASE_URL = "https://api.uyologistics.com";
+const WS_BASE_URL = "wss://api.uyologistics.com";
 
-console.log("🚀 Uyo Logistics Engine v2.0 LOADED - Cloud-Ready & Cache Cleared");
+console.log("🚀 Uyo Logistics Engine v2.0 LOADED - Production Domains Active");
 
 // --- 1. SETTINGS & BASE LAYERS ---
 const uyoCenter = [5.0377, 7.9128];
@@ -491,8 +492,8 @@ fetchLifetimeMetrics();
 
 // --- 10. BACKEND MISSION DEPLOYMENT (ENTERPRISE SAAS) ---
 window.deployMission = async function(vehicleId, gmapsUrl) {
-    // Generates the driver portal tracking link
-    const trackingUrl = `https://uyo-logistics-web.vercel.app/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
+    // Generates the driver portal tracking link (Using Production Domain)
+    const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
     
     const whatsappMessage = encodeURIComponent(
         `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
