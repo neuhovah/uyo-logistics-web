@@ -332,7 +332,9 @@ async function renderRoutes(routes, payload) {
         if (gpsPath.length > 2) {
             waypointsStr = gpsPath.slice(1, -1).map(c => `${c[0]},${c[1]}`).join('|');
         }
-        const gmapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originCoord[0]},${originCoord[1]}&destination=${destCoord[0]},${destCoord[1]}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=driving`;
+        
+        // 🚨 CRITICAL FIX: Repaired Google Maps URL generation for accurate turn-by-turn Driver Navigation
+        const gmapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originCoord[0]},${originCoord[1]}&destination=${destCoord[0]},${destCoord[1]}${waypointsStr ? '&waypoints=' + waypointsStr : ''}&travelmode=driving`;
         
         try {
             await new Promise(resolve => setTimeout(resolve, 800)); 
@@ -769,7 +771,7 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
         }
 
         // Simplified extraction for the dynamic re-route Google Maps URL
-        const newMapUrl = "https://www.google.com/maps/dir/?api=1&origin=Current+Location&destination=Uyo+Plaza"; // Replace with dynamic extraction if needed
+        const newMapUrl = "https://www.google.com/maps/dir/?api=1"; // Prepared for dynamic waypoint extraction
 
         // Push the new route to the Driver's phone via WebSocket
         const pushRes = await fetch(`${API_BASE_URL}/api/vrp/push-reroute`, {

@@ -52,7 +52,9 @@
     </div>
 
     <script>
-        const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
+        // --- SECURE ENTERPRISE DOMAIN UPGRADE ---
+        const API_BASE_URL = "https://api.uyologistics.com";
+        
         const urlParams = new URLSearchParams(window.location.search);
         const vehicleId = urlParams.get('v') || "UNKNOWN-VEH";
         const gmapsUrl = urlParams.get('map') || "#";
