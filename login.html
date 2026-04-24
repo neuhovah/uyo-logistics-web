@@ -22,6 +22,8 @@
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://js.paystack.co/v1/inline.js"></script>
 </head>
 <body class="bg-gray-900 text-white font-sans flex items-center justify-center h-screen bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
     
@@ -68,7 +70,7 @@
         const loginBtn = document.getElementById('login-btn');
         const keyInput = document.getElementById('license-key');
 
-        // --- NEW: REACTIVE UI OBSERVER ---
+        // --- REACTIVE UI OBSERVER ---
         // Automatically unlocks the button as soon as the user starts typing or pastes a key
         keyInput.addEventListener('input', () => {
             if (loginBtn.innerText === "Check your email to proceed" || loginBtn.disabled) {
@@ -95,6 +97,66 @@
             errorDiv.classList.remove('hidden');
             loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
             loginBtn.disabled = false;
+        }
+
+        // --- NEW: SUBSCRIPTION RENEWAL ENGINE FOR LOGIN PAGE ---
+        async function initiateSubscriptionRenewal(expiredKey) {
+            const planChoice = prompt(
+                "💳 LICENSE EXPIRED. SELECT RENEWAL PLAN:\n\n" +
+                "1. Daily Pass - ₦3,000\n" +
+                "2. Bi-Weekly Pro - ₦25,000\n" +
+                "3. Monthly Enterprise - ₦50,000\n\n" +
+                "Enter 1, 2, or 3:"
+            );
+
+            let amountKobo, daysToAdd;
+
+            if (planChoice === "1") {
+                amountKobo = 300000; daysToAdd = 1;
+            } else if (planChoice === "2") {
+                amountKobo = 2500000; daysToAdd = 14;
+            } else if (planChoice === "3") {
+                amountKobo = 5000000; daysToAdd = 30;
+            } else {
+                showError("Renewal cancelled. Key remains expired.");
+                return;
+            }
+
+            const userEmail = prompt("Please enter your business email for the receipt:");
+            if (!userEmail) return;
+
+            const handler = PaystackPop.setup({
+                key: 'pk_test_c84a971d6679a03491b013d7cb2a51b8cc1bbebd',
+                email: userEmail,
+                amount: amountKobo,
+                currency: "NGN",
+                ref: 'UYO-' + Math.floor((Math.random() * 1000000000) + 1),
+                callback: async function(response) {
+                    const updateRes = await fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            reference: response.reference, 
+                            license_key: expiredKey,
+                            days_to_add: daysToAdd 
+                        })
+                    });
+                    
+                    if (updateRes.ok) {
+                        alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s).`);
+                        // Force secure entry immediately after successful payment
+                        localStorage.setItem('uyo_license_key', expiredKey);
+                        window.location.replace("index.html"); 
+                    } else {
+                        alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
+                        showError("License Activation Failed after payment.");
+                    }
+                },
+                onClose: function() {
+                    showError("Transaction cancelled. Optimization remains locked.");
+                }
+            });
+            handler.openIframe();
         }
 
         async function handleLogin() {
@@ -124,7 +186,14 @@
                     }
                 } else {
                     const errorData = await response.json();
-                    throw new Error(errorData.detail || "Access Denied");
+                    
+                    // 🚨 CRITICAL FIX: Trap the expiration error and trigger Paystack
+                    if (response.status === 402 || (errorData.detail && errorData.detail.toLowerCase().includes('expired'))) {
+                        showError(errorData.detail || "License Expired. Launching Payment Gateway...");
+                        initiateSubscriptionRenewal(key);
+                    } else {
+                        throw new Error(errorData.detail || "Access Denied");
+                    }
                 }
             } catch (err) {
                 showError(err.message);
