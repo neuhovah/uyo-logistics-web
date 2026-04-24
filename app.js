@@ -1,6 +1,6 @@
 // ==============================================================================
 // UYO LOGISTICS INTELLIGENCE | MASTER COMMAND CENTER
-// 100% Survey-Grade Configuration (Panes, OSRM, BI, Simulation, Search & Symbology)
+// 100% Survey-Grade Configuration (Deep Zoom, Individual Deletion, OSRM, BI, Search)
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE ---
@@ -19,25 +19,33 @@ const WS_BASE_URL = "wss://api.uyologistics.com";
 
 console.log("🚀 Uyo Logistics Engine v2.0 LOADED - Production Domains Active");
 
-// --- 1. SETTINGS & BASE LAYERS ---
+// --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
 const uyoCenter = [5.0377, 7.9128];
 
+/** * SURVEY-GRADE UPSCALING: 
+ * maxZoom is the UI limit (how far the user can scroll).
+ * maxNativeZoom is the data limit (the last available physical image).
+ */
 const darkMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
     attribution: '© OpenStreetMap contributors, © CARTO',
     subdomains: 'abcd',
-    maxZoom: 20
+    maxZoom: 22,
+    maxNativeZoom: 19
 });
 const lightMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { 
     attribution: '© OpenStreetMap contributors, © CARTO',
     subdomains: 'abcd',
-    maxZoom: 20
+    maxZoom: 22,
+    maxNativeZoom: 19
 });
 const satellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { 
-    attribution: '© Google' 
+    attribution: '© Google',
+    maxZoom: 22,
+    maxNativeZoom: 20
 });
 
-// --- 2. INITIALIZE MAP ---
-const map = L.map('map', { center: uyoCenter, zoom: 13, layers: [darkMap], zoomControl: false });
+// --- 2. INITIALIZE MAP (GLOBAL CONSTRAINTS) ---
+const map = L.map('map', { center: uyoCenter, zoom: 13, maxZoom: 22, layers: [darkMap], zoomControl: false });
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // --- 3. PROFESSIONAL GIS PANES ---
@@ -137,6 +145,20 @@ depotMarker.on('dragend', function() {
     depotLocation.lon = position.lng;
 });
 
+// --- INDIVIDUAL PIN DELETION ---
+window.removePin = function(dropId) {
+    // 1. Remove the specific drop from the data array
+    dynamicDeliveries = dynamicDeliveries.filter(d => d.id !== dropId);
+    
+    // 2. Find and remove the specific visual marker from the map
+    unassignedPinsLayer.eachLayer(function(layer) {
+        if (layer.options.dropId === dropId) {
+            unassignedPinsLayer.removeLayer(layer);
+        }
+    });
+    console.log(`🗑️ Removed Drop: ${dropId}`);
+};
+
 map.on('click', function(e) {
     if (boundaryLayer.getLayers().length > 0) {
         if (!boundaryLayer.getLayers()[0].getBounds().contains(e.latlng)) { alert("⚠️ Location is outside service boundary."); return; }
@@ -144,7 +166,21 @@ map.on('click', function(e) {
     const dropId = "Drop_" + Math.floor(Math.random() * 10000);
     dynamicDeliveries.push({ id: dropId, lat: e.latlng.lat, lon: e.latlng.lng, weight: 1 });
     
-    L.marker([e.latlng.lat, e.latlng.lng], { icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), pane: 'poiPane' }).addTo(unassignedPinsLayer).bindPopup(`Order: ${dropId}`);
+    // Create an interactive popup with a delete button
+    const popupContent = `
+        <div style="text-align: center;">
+            <b style="color: #1f2937;">Order: ${dropId}</b><br>
+            <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                <i class="fa-solid fa-trash"></i> Remove Drop
+            </button>
+        </div>
+    `;
+
+    L.marker([e.latlng.lat, e.latlng.lng], { 
+        dropId: dropId, // Attach the ID directly to the Leaflet layer
+        icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
+        pane: 'poiPane' 
+    }).addTo(unassignedPinsLayer).bindPopup(popupContent);
 });
 
 // --- 7. NATIVE SEARCH BAR ENGINE ---
@@ -173,7 +209,23 @@ window.executeSearch = async function() {
         const dropId = "Search_" + Math.floor(Math.random() * 10000);
         dynamicDeliveries.push({ id: dropId, lat: searchLat, lon: searchLng, weight: 1 });
 
-        L.marker([searchLat, searchLng], { icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), pane: 'poiPane' }).addTo(unassignedPinsLayer).bindPopup(`<b>Dispatched to:</b><br>${data[0].display_name.split(',')[0]}`).openPopup();
+        // Include the remove capability on Search Bar drops as well
+        const popupContent = `
+            <div style="text-align: center;">
+                <b style="color: #1f2937;">Dispatched to:</b><br>
+                <span style="font-size: 11px;">${data[0].display_name.split(',')[0]}</span><br>
+                <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                    <i class="fa-solid fa-trash"></i> Remove Drop
+                </button>
+            </div>
+        `;
+
+        L.marker([searchLat, searchLng], { 
+            dropId: dropId,
+            icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
+            pane: 'poiPane' 
+        }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
+        
         map.flyTo([searchLat, searchLng], 16, { duration: 1.5 });
         document.getElementById('custom-search').value = ""; 
 
