@@ -141,16 +141,14 @@ const depotMarker = L.marker([depotLocation.lat, depotLocation.lon], { icon: dep
 
 depotMarker.on('dragend', function() {
     const position = depotMarker.getLatLng();
-    depotLocation.lat = position.lat;
-    depotLocation.lon = position.lng;
+    // TRUNCATE DEPOT COORDS
+    depotLocation.lat = parseFloat(position.lat.toFixed(6));
+    depotLocation.lon = parseFloat(position.lng.toFixed(6));
 });
 
 // --- INDIVIDUAL PIN DELETION ---
 window.removePin = function(dropId) {
-    // 1. Remove the specific drop from the data array
     dynamicDeliveries = dynamicDeliveries.filter(d => d.id !== dropId);
-    
-    // 2. Find and remove the specific visual marker from the map
     unassignedPinsLayer.eachLayer(function(layer) {
         if (layer.options.dropId === dropId) {
             unassignedPinsLayer.removeLayer(layer);
@@ -163,10 +161,14 @@ map.on('click', function(e) {
     if (boundaryLayer.getLayers().length > 0) {
         if (!boundaryLayer.getLayers()[0].getBounds().contains(e.latlng)) { alert("⚠️ Location is outside service boundary."); return; }
     }
-    const dropId = "Drop_" + Math.floor(Math.random() * 10000);
-    dynamicDeliveries.push({ id: dropId, lat: e.latlng.lat, lon: e.latlng.lng, weight: 1 });
     
-    // Create an interactive popup with a delete button
+    // 🚨 CRITICAL FIX: Truncate float mathematically to prevent API float-overflows
+    const cleanLat = parseFloat(e.latlng.lat.toFixed(6));
+    const cleanLng = parseFloat(e.latlng.lng.toFixed(6));
+    
+    const dropId = "Drop_" + Math.floor(Math.random() * 10000);
+    dynamicDeliveries.push({ id: dropId, lat: cleanLat, lon: cleanLng, weight: 1 });
+    
     const popupContent = `
         <div style="text-align: center;">
             <b style="color: #1f2937;">Order: ${dropId}</b><br>
@@ -176,8 +178,8 @@ map.on('click', function(e) {
         </div>
     `;
 
-    L.marker([e.latlng.lat, e.latlng.lng], { 
-        dropId: dropId, // Attach the ID directly to the Leaflet layer
+    L.marker([cleanLat, cleanLng], { 
+        dropId: dropId,
         icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
         pane: 'poiPane' 
     }).addTo(unassignedPinsLayer).bindPopup(popupContent);
@@ -200,7 +202,9 @@ window.executeSearch = async function() {
 
         if (data.length === 0) { alert("Location not found. Try searching for the street name (e.g., 'Oron Road') instead."); return; }
 
-        const searchLat = parseFloat(data[0].lat); const searchLng = parseFloat(data[0].lon);
+        // TRUNCATE SEARCH COORDS
+        const searchLat = parseFloat(parseFloat(data[0].lat).toFixed(6)); 
+        const searchLng = parseFloat(parseFloat(data[0].lon).toFixed(6));
 
         if (boundaryLayer.getLayers().length > 0) {
             if (!boundaryLayer.getLayers()[0].getBounds().contains([searchLat, searchLng])) { alert("⚠️ Searched location is outside the Uyo service boundary."); return; }
@@ -209,7 +213,6 @@ window.executeSearch = async function() {
         const dropId = "Search_" + Math.floor(Math.random() * 10000);
         dynamicDeliveries.push({ id: dropId, lat: searchLat, lon: searchLng, weight: 1 });
 
-        // Include the remove capability on Search Bar drops as well
         const popupContent = `
             <div style="text-align: center;">
                 <b style="color: #1f2937;">Dispatched to:</b><br>
@@ -234,15 +237,31 @@ window.executeSearch = async function() {
 
 document.getElementById("custom-search").addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); window.executeSearch(); } });
 
+// 🚨 CRITICAL FIX: The Zombie WSS Line Killer
 window.clearUnassignedPins = function() { 
     unassignedPinsLayer.clearLayers(); 
     routeLayerGroup.clearLayers(); 
     dynamicDeliveries = []; 
     window.activeDeployments = {}; 
     
+    // Clear Live Markers
+    if (typeof liveMarkers !== 'undefined') {
+        for (let id in liveMarkers) {
+            if (map.hasLayer(liveMarkers[id])) map.removeLayer(liveMarkers[id]);
+        }
+        liveMarkers = {};
+    }
+
+    // Reset WebSocket
+    if (typeof liveFleetSocket !== 'undefined' && liveFleetSocket) {
+        liveFleetSocket.close();
+        liveFleetSocket = null;
+        console.log("📡 Live Fleet Telemetry: Connection reset by 'Clear Pins'");
+    }
+
     const fleetList = document.getElementById('fleet-list');
     if (fleetList) fleetList.innerHTML = "";
-    updateBIMetrics(0, 0); 
+    if (typeof updateBIMetrics === 'function') updateBIMetrics(0, 0); 
     
     const reportContainer = document.getElementById("report-container");
     if (reportContainer) reportContainer.style.display = "none";
@@ -287,18 +306,26 @@ window.solveAndDisplay = async function() {
             body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }) 
         });
         
+        // 🚨 CRITICAL FIX: Bulletproof error trapping
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
+            let errorMsg = "Backend Routing Error";
+            try {
+                const errorData = await response.json();
+                errorMsg = errorData.detail || errorMsg;
+            } catch(e) {} 
+
             if (response.status === 402) {
-                if(confirm(`💳 PAYMENT REQUIRED:\n\n${errorData.detail || 'Access restricted.'}\n\nWould you like to renew your subscription now?`)) {
+                if(confirm(`💳 PAYMENT REQUIRED:\n\n${errorMsg}\n\nWould you like to renew your subscription now?`)) {
                     initiateSubscriptionRenewal();
                 }
             } else if (response.status === 401) {
-                alert(`❌ ACCESS DENIED:\n\n${errorData.detail || 'Invalid License Key.'}`);
+                alert(`❌ ACCESS DENIED:\n\n${errorMsg}`);
                 localStorage.removeItem('uyo_license_key');
                 window.location.href = "login.html";
+            } else if (response.status === 400 && typeof errorMsg === 'string' && errorMsg.toLowerCase().includes("valid sequence")) {
+                throw new Error("OR-Tools Topology Failure:\n\nOne or more pins are dropped in a 'dead zone' too far from a mapped road. Please use the 'Remove Drop' button on your most recent pins and nudge them closer to a main street.");
             } else {
-                throw new Error(errorData.detail || "Backend Distance Matrix Error");
+                throw new Error(errorMsg);
             }
             return; 
         }
@@ -308,7 +335,6 @@ window.solveAndDisplay = async function() {
         unassignedPinsLayer.clearLayers();
         window.activeDeployments = {}; 
 
-        // 🔬 ACADEMIC PROTOCOL: Capture the exact pgRouting time metrics from the backend (Single Source of Truth)
         let backendOptimizedMins = 0;
         data.routes.forEach(r => {
             if (r.route && r.route.length > 2) {
@@ -338,10 +364,14 @@ window.solveAndDisplay = async function() {
         await renderRoutes(data.routes, { depot: depotLocation, deliveries: dynamicDeliveries });
 
     } catch (error) { 
-        alert(`Routing Failed!\n\n${error.message}`); console.error(error);
+        alert(error.message); 
+        console.error("Routing Error:", error);
     } finally { 
-        btn.innerHTML = "Optimize Routes"; 
-        btn.disabled = false; 
+        // 🚨 CRITICAL FIX: Guaranteed UI reset
+        if (btn) {
+            btn.innerHTML = "Optimize Routes"; 
+            btn.disabled = false; 
+        }
     }
 };
 
@@ -385,7 +415,6 @@ async function renderRoutes(routes, payload) {
             waypointsStr = gpsPath.slice(1, -1).map(c => `${c[0]},${c[1]}`).join('|');
         }
         
-        // 🚨 CRITICAL FIX: Repaired Google Maps URL generation for accurate turn-by-turn Driver Navigation
         const gmapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originCoord[0]},${originCoord[1]}&destination=${destCoord[0]},${destCoord[1]}${waypointsStr ? '&waypoints=' + waypointsStr : ''}&travelmode=driving`;
         
         try {
@@ -449,7 +478,6 @@ async function renderRoutes(routes, payload) {
             console.error("Complete Network Failure. Deploying Direct Lines.", e);
         }
     }
-    // Force frontend dashboard to use Backend Time Math for parity with CSV
     updateBIMetrics(window.currentMissionMins, window.currentBaselineMins);
 }
 
@@ -474,34 +502,24 @@ async function fetchLifetimeMetrics() {
 function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
     let manualTimeEst = unoptimizedMins;
     
-    // Safety check: Fallback to heuristic if matrix empirical baseline failed
     if (!manualTimeEst || manualTimeEst === 0) {
         manualTimeEst = optimizedMins * 1.35; 
     }
-    
-    // Safety check: Algorithmic anomaly trapping
     if (manualTimeEst < optimizedMins && optimizedMins > 0) {
         manualTimeEst = optimizedMins * 1.05; 
     }
 
     const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
-    
-    // 🔬 SURVEY-GRADE URBAN FUEL MODEL (Mirrors export_utils.py exactly)
-    // Assume Uyo urban average speed is 20 km/h -> Distance (km) = Time (mins) * 0.333
     const distanceSavedKm = timeSaved * 0.333;
-    
-    // Urban delivery fuel economy is ~6 km per Liter. Fuel price: ₦1,200/L
     const currentFuelSaved = (distanceSavedKm / 6) * 1200; 
     const currentCo2Saved = (distanceSavedKm / 6) * 2.3; 
     const sessionEfficiency = optimizedMins > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
     
-    // DOM Element Targets
     const statFuelEl = document.getElementById('stat-fuel');
     const statEffEl = document.getElementById('stat-efficiency');
     const statCo2El = document.getElementById('stat-co2');
 
     if (optimizedMins > 0) {
-        // 🔄 STATE B: PREVIEW MODE (Display Session Stats)
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
             statFuelEl.innerText = `₦${Math.floor(currentFuelSaved).toLocaleString()}`;
@@ -518,7 +536,6 @@ function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
             statCo2El.style.color = "#fbbf24";
         }
     } else {
-        // 🌍 STATE A: IDLE MODE (Display Lifetime Stats)
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
             statFuelEl.innerText = `₦${Math.floor(lifetimeStats.fuel).toLocaleString()}`;
@@ -546,7 +563,6 @@ fetchLifetimeMetrics();
 
 // --- 10. BACKEND MISSION DEPLOYMENT (ENTERPRISE SAAS) ---
 window.deployMission = async function(vehicleId, gmapsUrl) {
-    // Generates the driver portal tracking link (Using Production Domain)
     const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
     
     const whatsappMessage = encodeURIComponent(
@@ -565,10 +581,7 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
 
     if (!userChoice) return;
 
-    // 🛑 POPUP BLOCKER BYPASS: Ask for preference and open tab immediately
     const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
-    
-    // Open a blank tab NOW while we still have the browser's "trusted click" permission
     const newTab = window.open('about:blank', '_blank');
 
     try {
@@ -586,7 +599,6 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         
         if (response.ok) {
             console.log(`✅ Mission Deploy Success: ${vehicleId}`);
-            
             setTimeout(fetchLifetimeMetrics, 1500);
             unassignedPinsLayer.clearLayers();
 
@@ -606,19 +618,16 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
                 }
             });
 
-            // 🎯 Success! Redirect the pre-opened tab to the actual URL
             if (newTab) {
                 newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
             }
 
         } else {
-            // Close the tab if the server failed
             if (newTab) newTab.close(); 
             const errData = await response.json().catch(() => ({}));
             throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
         }
     } catch (err) {
-        // Close the tab if there was a network error
         if (newTab) newTab.close(); 
         console.error("Deployment Error:", err);
         alert(`❌ Deployment Failed!\n\n${err.message}`);
@@ -656,6 +665,18 @@ function connectLiveFleet() {
     liveFleetSocket.onmessage = async function(event) {
         const data = JSON.parse(event.data);
         
+        // 🚨 CRITICAL FIX: Trap status-only payloads to prevent Leaflet LatLng crashes
+        if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
+            if (data.status === 'completed') {
+                console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+                if (liveMarkers[data.vehicle_id]) {
+                    map.removeLayer(liveMarkers[data.vehicle_id]);
+                    delete liveMarkers[data.vehicle_id];
+                }
+            }
+            return; // Exit WSS logic safely without crashing Leaflet
+        }
+
         if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
             console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
             try {
