@@ -121,28 +121,30 @@
                 amount: amountKobo,
                 currency: "NGN",
                 ref: 'UYO-' + Math.floor((Math.random() * 1000000000) + 1),
-                callback: async function(response) {
-                    try {
-                        const updateRes = await fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ 
-                                reference: response.reference, 
-                                license_key: expiredKey,
-                                days_to_add: daysToAdd 
-                            })
-                        });
-                        
-                        if (updateRes.ok) {
+                // 🚨 FIX: Removed 'async' to satisfy Paystack v1 strict validation
+                callback: function(response) {
+                    // Replaced await with standard Promise chaining
+                    fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            reference: response.reference, 
+                            license_key: expiredKey,
+                            days_to_add: daysToAdd 
+                        })
+                    })
+                    .then(res => {
+                        if (res.ok) {
                             alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s).`);
                             localStorage.setItem('uyo_license_key', expiredKey);
                             window.location.replace("index.html"); 
                         } else {
                             alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
                         }
-                    } catch (err) {
+                    })
+                    .catch(err => {
                         alert("⚠️ Network error during activation verification.");
-                    }
+                    });
                 },
                 onClose: function() {
                     alert("Transaction cancelled. Optimization remains locked.");
