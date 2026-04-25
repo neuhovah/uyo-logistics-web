@@ -73,7 +73,7 @@
         // --- REACTIVE UI OBSERVER ---
         // Automatically unlocks the button as soon as the user starts typing or pastes a key
         keyInput.addEventListener('input', () => {
-            if (loginBtn.innerText === "Check your email to proceed" || loginBtn.disabled) {
+            if (loginBtn.innerText === "Check your email to proceed" || loginBtn.disabled || document.getElementById('renew-plan')) {
                 loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
                 loginBtn.disabled = false;
                 loginBtn.style.backgroundColor = ""; // Reset to default blue-600 from CSS
@@ -93,37 +93,27 @@
         }
 
         function showError(message) {
-            errorDiv.innerText = message;
+            // Clean out any previous renewal forms before showing a standard error
+            errorDiv.innerHTML = message;
+            errorDiv.className = "text-red-400 text-xs font-bold text-center bg-red-900/30 p-2 rounded border border-red-800 mt-3";
             errorDiv.classList.remove('hidden');
+            
             loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
             loginBtn.disabled = false;
         }
 
-        // --- NEW: SUBSCRIPTION RENEWAL ENGINE FOR LOGIN PAGE ---
-        async function initiateSubscriptionRenewal(expiredKey) {
-            const planChoice = prompt(
-                "💳 LICENSE EXPIRED. SELECT RENEWAL PLAN:\n\n" +
-                "1. Daily Pass - ₦3,000\n" +
-                "2. Bi-Weekly Pro - ₦25,000\n" +
-                "3. Monthly Enterprise - ₦50,000\n\n" +
-                "Enter 1, 2, or 3:"
-            );
+        // --- 🚨 CRITICAL ENGINE: IN-DOM PAYSTACK RENEWAL ---
+        // This function is triggered by a DIRECT user click, bypassing all browser pop-up blockers
+        window.processRenewal = function(expiredKey) {
+            const planChoice = document.getElementById('renew-plan').value;
+            const userEmail = document.getElementById('renew-email').value.trim();
+            
+            if (!userEmail) { alert("⚠️ Please enter a business email for the receipt."); return; }
 
             let amountKobo, daysToAdd;
-
-            if (planChoice === "1") {
-                amountKobo = 300000; daysToAdd = 1;
-            } else if (planChoice === "2") {
-                amountKobo = 2500000; daysToAdd = 14;
-            } else if (planChoice === "3") {
-                amountKobo = 5000000; daysToAdd = 30;
-            } else {
-                showError("Renewal cancelled. Key remains expired.");
-                return;
-            }
-
-            const userEmail = prompt("Please enter your business email for the receipt:");
-            if (!userEmail) return;
+            if (planChoice === "1") { amountKobo = 300000; daysToAdd = 1; }
+            else if (planChoice === "2") { amountKobo = 2500000; daysToAdd = 14; }
+            else if (planChoice === "3") { amountKobo = 5000000; daysToAdd = 30; }
 
             const handler = PaystackPop.setup({
                 key: 'pk_test_c84a971d6679a03491b013d7cb2a51b8cc1bbebd',
@@ -132,32 +122,34 @@
                 currency: "NGN",
                 ref: 'UYO-' + Math.floor((Math.random() * 1000000000) + 1),
                 callback: async function(response) {
-                    const updateRes = await fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            reference: response.reference, 
-                            license_key: expiredKey,
-                            days_to_add: daysToAdd 
-                        })
-                    });
-                    
-                    if (updateRes.ok) {
-                        alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s).`);
-                        // Force secure entry immediately after successful payment
-                        localStorage.setItem('uyo_license_key', expiredKey);
-                        window.location.replace("index.html"); 
-                    } else {
-                        alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
-                        showError("License Activation Failed after payment.");
+                    try {
+                        const updateRes = await fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                reference: response.reference, 
+                                license_key: expiredKey,
+                                days_to_add: daysToAdd 
+                            })
+                        });
+                        
+                        if (updateRes.ok) {
+                            alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s).`);
+                            localStorage.setItem('uyo_license_key', expiredKey);
+                            window.location.replace("index.html"); 
+                        } else {
+                            alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
+                        }
+                    } catch (err) {
+                        alert("⚠️ Network error during activation verification.");
                     }
                 },
                 onClose: function() {
-                    showError("Transaction cancelled. Optimization remains locked.");
+                    alert("Transaction cancelled. Optimization remains locked.");
                 }
             });
             handler.openIframe();
-        }
+        };
 
         async function handleLogin() {
             const key = keyInput.value.trim();
@@ -170,33 +162,53 @@
             try {
                 const response = await fetch(`${API_BASE_URL}/api/vrp/verify-key`, {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json', 
-                        'x-license-key': key 
-                    }
+                    headers: { 'Content-Type': 'application/json', 'x-license-key': key }
                 });
 
                 if (response.ok) {
                     localStorage.setItem('uyo_license_key', key);
-                    if (localStorage.getItem('uyo_license_key') === key) {
-                        console.log("Storage Verified. Redirecting...");
-                        window.location.replace("index.html");
-                    } else {
-                        throw new Error("Storage failure. Please disable Private Mode.");
-                    }
+                    window.location.replace("index.html");
                 } else {
-                    const errorData = await response.json();
+                    const errorData = await response.json().catch(() => ({}));
                     
-                    // 🚨 CRITICAL FIX: Trap the expiration error and trigger Paystack
+                    // 🚨 THE TRAP: Catch 402 or explicit expiration messages and inject DOM form
                     if (response.status === 402 || (errorData.detail && errorData.detail.toLowerCase().includes('expired'))) {
-                        showError(errorData.detail || "License Expired. Launching Payment Gateway...");
-                        initiateSubscriptionRenewal(key);
+                        
+                        loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
+                        loginBtn.disabled = false;
+                        
+                        // Inject the renewal UI directly into the DOM
+                        errorDiv.innerHTML = `
+                            <div class="text-left mt-2">
+                                <p class="text-white font-bold text-[11px] mb-2 uppercase border-b border-red-800 pb-1">
+                                    <i class="fa-solid fa-triangle-exclamation text-red-400"></i> License Expired. Renew Below:
+                                </p>
+                                <select id="renew-plan" class="w-full text-xs bg-gray-900 text-white p-2 rounded mb-2 border border-red-800 outline-none focus:border-red-500">
+                                    <option value="1">Daily Pass - ₦3,000</option>
+                                    <option value="2">Bi-Weekly Pro - ₦25,000</option>
+                                    <option value="3">Monthly Enterprise - ₦50,000</option>
+                                </select>
+                                <input type="email" id="renew-email" placeholder="Enter Business Email" class="w-full text-xs bg-gray-900 text-white p-2 rounded mb-3 border border-red-800 outline-none focus:border-red-500">
+                                <button onclick="processRenewal('${key}')" class="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-3 rounded shadow transition-all flex justify-center items-center gap-2">
+                                    <i class="fa-solid fa-credit-card"></i> Pay & Reactivate
+                                </button>
+                            </div>
+                        `;
+                        // Ensure styling accommodates the new form
+                        errorDiv.className = "bg-gray-800 p-3 rounded border border-red-800 mt-4 shadow-inner";
+                        errorDiv.classList.remove('hidden');
+
                     } else {
+                        // Throw standard errors (like "Invalid Key") to the catch block
                         throw new Error(errorData.detail || "Access Denied");
                     }
                 }
             } catch (err) {
-                showError(err.message);
+                // If the Chrome extension crashes the promise, 'err.message' might be the listener error.
+                // We fallback to a generic message to prevent exposing ugly browser console errors to the user.
+                let displayMsg = err.message;
+                if (displayMsg.includes("listener indicated")) displayMsg = "Network disruption. Please try again.";
+                showError(displayMsg);
             }
         }
 
@@ -224,8 +236,8 @@
                 if (response.ok) {
                     alert(`📩 KEY DISPATCHED!\n\nPlease check your inbox for ${userEmail}.`);
                     loginBtn.innerText = "Check your email to proceed";
-                    loginBtn.disabled = true; // Briefly disable until they type the key
-                    loginBtn.style.backgroundColor = "#1e293b"; // Dim to gray-800 to signal "Waiting"
+                    loginBtn.disabled = true; 
+                    loginBtn.style.backgroundColor = "#1e293b"; 
                 } else {
                     const errData = await response.json().catch(() => ({}));
                     alert(`⚠️ Action Denied: ${errData.detail || "Could not generate trial."}`);
