@@ -763,7 +763,7 @@ window.initiateSubscriptionRenewal = async function() {
     if (!userEmail) return;
 
     const handler = PaystackPop.setup({
-        key: 'pk_test_c84a971d6679a03491b013d7cb2a51b8cc1bbebd',
+        key: 'pk_live_e0c2402108448771f33bbe09670508ede2ad6a92',
         email: userEmail,
         amount: amountKobo,
         currency: "NGN",
