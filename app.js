@@ -90,7 +90,15 @@ const layerStyles = {
 
 async function fetchSpatialLayer(endpoint, layerGroup, styleConfig, targetPane = 'overlayPane') {
     try {
-        const response = await fetch(`${API_BASE_URL}/api/layers${endpoint}`);
+        // 🚨 FIX: Inject the active license key into the headers for spatial data retrieval
+        const response = await fetch(`${API_BASE_URL}/api/layers${endpoint}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-license-key': localStorage.getItem('uyo_license_key')
+            }
+        });
+        
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
@@ -106,7 +114,9 @@ async function fetchSpatialLayer(endpoint, layerGroup, styleConfig, targetPane =
                 }
             }
         }).addTo(layerGroup);
-    } catch (err) { console.warn(`⚠️ Error loading ${endpoint}:`, err); }
+    } catch (err) { 
+        console.warn(`⚠️ Error loading ${endpoint}:`, err); 
+    }
 }
 
 function loadAllDatabaseLayers() {
