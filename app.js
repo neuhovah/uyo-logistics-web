@@ -22,6 +22,12 @@ console.log("🚀 Uyo Logistics Engine v2.0 LOADED - Production Domains Active")
 // --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
 const uyoCenter = [5.0377, 7.9128];
 
+// --- SURVEY-GRADE GEOFENCE FALLBACK ---
+const uyoMathematicalBounds = L.latLngBounds(
+    L.latLng(4.9000, 7.8000), // SouthWest limits
+    L.latLng(5.1500, 8.1000)  // NorthEast limits
+);
+
 /** * SURVEY-GRADE UPSCALING: 
  * maxZoom is the UI limit (how far the user can scroll).
  * maxNativeZoom is the data limit (the last available physical image).
@@ -168,8 +174,18 @@ window.removePin = function(dropId) {
 };
 
 map.on('click', function(e) {
+    // 🚨 CRITICAL FIX: Titanium Geofencing (Fail-Closed)
+    let isInside = false;
     if (boundaryLayer.getLayers().length > 0) {
-        if (!boundaryLayer.getLayers()[0].getBounds().contains(e.latlng)) { alert("⚠️ Location is outside service boundary."); return; }
+        isInside = boundaryLayer.getLayers()[0].getBounds().contains(e.latlng);
+    } else {
+        // Fallback to strict mathematical box if DB layer is offline
+        isInside = uyoMathematicalBounds.contains(e.latlng);
+    }
+
+    if (!isInside) { 
+        alert("⚠️ Location is outside the Uyo service boundary."); 
+        return; 
     }
     
     // 🚨 CRITICAL FIX: Truncate float mathematically to prevent API float-overflows
@@ -216,8 +232,17 @@ window.executeSearch = async function() {
         const searchLat = parseFloat(parseFloat(data[0].lat).toFixed(6)); 
         const searchLng = parseFloat(parseFloat(data[0].lon).toFixed(6));
 
+        // 🚨 CRITICAL FIX: Titanium Geofencing for Search
+        let isInside = false;
         if (boundaryLayer.getLayers().length > 0) {
-            if (!boundaryLayer.getLayers()[0].getBounds().contains([searchLat, searchLng])) { alert("⚠️ Searched location is outside the Uyo service boundary."); return; }
+            isInside = boundaryLayer.getLayers()[0].getBounds().contains([searchLat, searchLng]);
+        } else {
+            isInside = uyoMathematicalBounds.contains([searchLat, searchLng]);
+        }
+
+        if (!isInside) { 
+            alert("⚠️ Searched location is outside the Uyo service boundary."); 
+            return; 
         }
 
         const dropId = "Search_" + Math.floor(Math.random() * 10000);
@@ -303,6 +328,10 @@ window.solveAndDisplay = async function() {
     };
     let activeFleet = (vehicleChoice === 'all') ? [...fleetProfiles.bike, ...fleetProfiles.van] : fleetProfiles[vehicleChoice];
     
+    // 🚨 NEW FIX: Establish a 15-second network timeout controller
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); 
+    
     try {
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Optimizing Engine...`; 
         btn.disabled = true;
@@ -313,8 +342,11 @@ window.solveAndDisplay = async function() {
                 'Content-Type': 'application/json',
                 'x-license-key': currentLicenseKey
             }, 
-            body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }) 
+            body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }),
+            signal: controller.signal // <-- Attach the signal here
         });
+        
+        clearTimeout(timeoutId); // Network succeeded, cancel the timeout killer
         
         // 🚨 CRITICAL FIX: Bulletproof error trapping
         if (!response.ok) {
@@ -374,7 +406,12 @@ window.solveAndDisplay = async function() {
         await renderRoutes(data.routes, { depot: depotLocation, deliveries: dynamicDeliveries });
 
     } catch (error) { 
-        alert(error.message); 
+        // 🚨 NEW FIX: Handle the timeout gracefully
+        if (error.name === 'AbortError') {
+            alert("⚠️ Network Timeout: Connection to the Uyo Logistics cloud was lost. Please check your internet and try again.");
+        } else {
+            alert(error.message); 
+        }
         console.error("Routing Error:", error);
     } finally { 
         // 🚨 CRITICAL FIX: Guaranteed UI reset
@@ -513,9 +550,6 @@ function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
     let manualTimeEst = parseFloat(unoptimizedMins) || 0;
     
     // 🚨 CRITICAL FIX: The "Sanity Clamp" for backend data anomalies
-    // If the backend API returns a missing, zero, or absurdly high baseline 
-    // (e.g., returning seconds instead of minutes, exceeding 2x the optimal time),
-    // we override it with a realistic real-world maximum (1.35x).
     if (manualTimeEst === 0 || manualTimeEst > (optimizedMins * 2.0)) {
         manualTimeEst = optimizedMins * 1.35;
     }
