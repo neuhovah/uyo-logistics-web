@@ -96,14 +96,23 @@ const layerStyles = {
 
 async function fetchSpatialLayer(endpoint, layerGroup, styleConfig, targetPane = 'overlayPane') {
     try {
-        // 🚨 FIX: Inject the active license key into the headers for spatial data retrieval
+        const currentKey = localStorage.getItem('uyo_license_key');
         const response = await fetch(`${API_BASE_URL}/api/layers${endpoint}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'x-license-key': localStorage.getItem('uyo_license_key')
+                'x-license-key': currentKey
             }
         });
+        
+        // 🚨 CRITICAL FIX: The 401 Session Interceptor
+        if (response.status === 401) {
+            console.error(`🔒 Session Expired: Rejected by ${endpoint}`);
+            localStorage.removeItem('uyo_license_key');
+            alert("Your Corporate License or Trial Key has expired. Please log in again to renew access.");
+            window.location.href = "login.html";
+            return; 
+        }
         
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
@@ -536,6 +545,14 @@ async function fetchLifetimeMetrics() {
         const response = await fetch(`${API_BASE_URL}/api/vrp/history`, {
             headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
         });
+        
+        // 🚨 CRITICAL FIX: Catch metric 401s
+        if (response.status === 401) {
+            localStorage.removeItem('uyo_license_key');
+            window.location.href = "login.html";
+            return;
+        }
+
         if (response.ok) {
             const data = await response.json();
             lifetimeStats.fuel = data.total_fuel_saved || 0;
@@ -613,6 +630,9 @@ fetchLifetimeMetrics();
 
 // --- 10. BACKEND MISSION DEPLOYMENT (ENTERPRISE SAAS) ---
 window.deployMission = async function(vehicleId, gmapsUrl) {
+    // 🚨 CRITICAL FIX: Open the tab instantly to bypass popup blockers
+    const newTab = window.open('about:blank', '_blank'); 
+    
     const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
     
     const whatsappMessage = encodeURIComponent(
@@ -629,10 +649,12 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         `Click OK to deploy.`
     );
 
-    if (!userChoice) return;
+    if (!userChoice) {
+        newTab.close(); // Kill the blank tab if they cancel the mission
+        return;
+    }
 
     const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
-    const newTab = window.open('about:blank', '_blank');
 
     try {
         const coords = window.activeDeployments[vehicleId];
@@ -668,17 +690,16 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
                 }
             });
 
-            if (newTab) {
-                newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
-            }
+            // Redirect the pre-opened tab to the correct destination
+            newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
 
         } else {
-            if (newTab) newTab.close(); 
+            newTab.close(); // Kill the tab on server error
             const errData = await response.json().catch(() => ({}));
             throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
         }
     } catch (err) {
-        if (newTab) newTab.close(); 
+        newTab.close(); // Kill the tab on catch error
         console.error("Deployment Error:", err);
         alert(`❌ Deployment Failed!\n\n${err.message}`);
     }
