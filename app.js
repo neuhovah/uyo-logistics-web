@@ -510,11 +510,17 @@ async function fetchLifetimeMetrics() {
 }
 
 function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
-    let manualTimeEst = unoptimizedMins;
+    let manualTimeEst = parseFloat(unoptimizedMins) || 0;
     
-    if (!manualTimeEst || manualTimeEst === 0) {
-        manualTimeEst = optimizedMins * 1.35; 
+    // 🚨 CRITICAL FIX: The "Sanity Clamp" for backend data anomalies
+    // If the backend API returns a missing, zero, or absurdly high baseline 
+    // (e.g., returning seconds instead of minutes, exceeding 2x the optimal time),
+    // we override it with a realistic real-world maximum (1.35x).
+    if (manualTimeEst === 0 || manualTimeEst > (optimizedMins * 2.0)) {
+        manualTimeEst = optimizedMins * 1.35;
     }
+    
+    // Ensure the baseline is never somehow faster than the optimized machine route
     if (manualTimeEst < optimizedMins && optimizedMins > 0) {
         manualTimeEst = optimizedMins * 1.05; 
     }
