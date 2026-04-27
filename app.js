@@ -337,9 +337,9 @@ window.solveAndDisplay = async function() {
     };
     let activeFleet = (vehicleChoice === 'all') ? [...fleetProfiles.bike, ...fleetProfiles.van] : fleetProfiles[vehicleChoice];
     
-    // 🚨 NEW FIX: Establish a 15-second network timeout controller
+    // 🚨 CRITICAL FIX: Increased to 60-seconds to allow for Serverless Cold Starts
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); 
+    const timeoutId = setTimeout(() => controller.abort(), 60000); 
     
     try {
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Optimizing Engine...`; 
