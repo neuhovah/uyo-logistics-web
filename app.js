@@ -3,33 +3,34 @@
 // 100% Survey-Grade Configuration (Deep Zoom, Individual Deletion, OSRM, BI, Search)
 // ==============================================================================
 
-// --- 0. SECURITY HANDSHAKE (THE STRICT GATEKEEPER) ---
+// --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
 const activeLicenseKey = localStorage.getItem('uyo_license_key');
 
 if (!activeLicenseKey) {
     console.warn("🔒 Unauthorized access attempt. Redirecting to Secure Login.");
     window.location.replace("login.html");
 } else {
-    console.log("🔄 Performing Hard Validation Ping...");
+    console.log("🔄 Performing Background Validation Ping...");
     
-    // 🔥 ENTERPRISE FIX: The Hard Validation Ping is now a true Gatekeeper.
+    // 1. Instantly boot the visual UI (Base Maps) so the screen layout doesn't break
+    bootCommandCenter(); 
+
+    // 2. Fire the Gatekeeper ping silently in the background
     fetch("/api/vrp/history", {
         method: 'GET',
         headers: { 'x-license-key': activeLicenseKey }
     })
     .then(response => {
         if (response.status === 401 || response.status === 403) {
-            console.error("❌ License Expired or Invalid. Purging session.");
+            console.error("❌ Background Kill-Switch Triggered: License Expired.");
             localStorage.removeItem('uyo_license_key');
             window.location.replace("login.html");
         } else {
-            console.log("✅ License Key Verified. Unlocking Command Center...");
-            bootCommandCenter(); // <-- APP ONLY LAUNCHES IF HANDSHAKE PASSES
+            console.log("✅ License Key Verified. Session secured.");
         }
     })
     .catch(err => {
-        console.warn("⚠️ Validation ping network error. Booting offline mode...", err);
-        bootCommandCenter(); // Proceed if network is just being slow but key exists locally
+        console.warn("⚠️ Validation ping network delay. Relying on endpoint interceptors.", err);
     });
 }
 
