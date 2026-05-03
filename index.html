@@ -60,7 +60,7 @@
     </header>
 
     <main class="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-12 gap-6">
-        <div class="lg:col-span-3 bg-gray-800 p-4 rounded-xl border border-gray-700 h-fit">
+        <div class="lg:col-span-3 bg-gray-800 p-4 rounded-xl border border-gray-700 h-full flex flex-col">
             <div id="bi-dashboard" class="mb-6 space-y-3 border-b border-gray-700 pb-6">
                 <h3 class="text-blue-400 text-[10px] font-black uppercase tracking-widest tracking-tighter">Operational Intelligence</h3>
                 <div class="grid grid-cols-3 gap-1.5">
@@ -94,6 +94,17 @@
                 Active Fleet <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
             </h2>
             <div id="fleet-list" class="space-y-4 text-xs text-gray-500 italic">Ready for dispatch...</div>
+
+            <!-- 🏢 CORPORATE CONTACT SECTION -->
+            <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid #374151;">
+                <p style="font-size: 0.75rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; font-weight: 600;">
+                    Support & Licensing
+                </p>
+                <a href="mailto:admin@uyologistics.com" style="display: flex; align-items: center; font-size: 0.875rem; color: #60a5fa; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#93c5fd'" onmouseout="this.style.color='#60a5fa'">
+                    <i class="fa-solid fa-envelope" style="margin-right: 0.5rem;"></i> 
+                    admin@uyologistics.com
+                </a>
+            </div>
         </div>
 
         <div class="lg:col-span-9 relative rounded-xl border border-gray-700 overflow-hidden shadow-2xl h-[70vh]">
