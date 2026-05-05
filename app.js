@@ -247,26 +247,34 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. NATIVE SEARCH BAR ENGINE ---
+    // --- 7. NATIVE SEARCH BAR ENGINE (GOOGLE GEOCODING API) ---
     window.executeSearch = async function() {
         const query = document.getElementById('custom-search').value.trim();
         if (!query) return;
 
+        // 🚨 CRITICAL: Paste your restricted Google API Key here
+        const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
+        
         try {
-            let searchString = query.toLowerCase().includes('uyo') ? query + ', Nigeria' : query + ', Uyo, Nigeria';
-            let res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchString)}&limit=1`);
-            let data = await res.json();
+            // Force Google to prioritize Uyo using our survey-grade bounding box
+            // Format: bounds=southwest.lat,southwest.lng|northeast.lat,northeast.lng
+            const bounds = "4.9000,7.8000|5.1500,8.1000";
             
-            if (data.length === 0) { 
-                res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Akwa Ibom, Nigeria')}&limit=1`);
-                data = await res.json();
+            // Append Akwa Ibom to assist the fuzzy search
+            const searchString = query.toLowerCase().includes('uyo') ? query : `${query}, Uyo, Akwa Ibom`;
+
+            const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchString)}&bounds=${bounds}&key=${GOOGLE_API_KEY}`);
+            const data = await res.json();
+            
+            if (data.status !== "OK" || data.results.length === 0) { 
+                alert("Location not found via Google. Try adding a nearby landmark."); 
+                return; 
             }
 
-            if (data.length === 0) { alert("Location not found. Try searching for the street name (e.g., 'Oron Road') instead."); return; }
-
-            // TRUNCATE SEARCH COORDS
-            const searchLat = parseFloat(parseFloat(data[0].lat).toFixed(6)); 
-            const searchLng = parseFloat(parseFloat(data[0].lon).toFixed(6));
+            // Extract Google's highly precise coordinates
+            const result = data.results[0];
+            const searchLat = parseFloat(result.geometry.location.lat.toFixed(6)); 
+            const searchLng = parseFloat(result.geometry.location.lng.toFixed(6));
 
             // 🚨 CRITICAL FIX: Titanium Geofencing for Search
             let isInside = false;
@@ -277,17 +285,20 @@ function bootCommandCenter() {
             }
 
             if (!isInside) { 
-                alert("⚠️ Searched location is outside the Uyo service boundary."); 
+                alert(`⚠️ Google found "${result.formatted_address}", but it is outside the Uyo service boundary.`); 
                 return; 
             }
 
             const dropId = "Search_" + Math.floor(Math.random() * 10000);
             dynamicDeliveries.push({ id: dropId, lat: searchLat, lon: searchLng, weight: 1 });
 
+            // Truncate the formatted address for the popup so it fits nicely
+            const shortAddress = result.formatted_address.split(',')[0] + ", " + (result.formatted_address.split(',')[1] || "Uyo");
+
             const popupContent = `
                 <div style="text-align: center;">
                     <b style="color: #1f2937;">Dispatched to:</b><br>
-                    <span style="font-size: 11px;">${data[0].display_name.split(',')[0]}</span><br>
+                    <span style="font-size: 11px;">${shortAddress}</span><br>
                     <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                         <i class="fa-solid fa-trash"></i> Remove Drop
                     </button>
@@ -303,7 +314,10 @@ function bootCommandCenter() {
             map.flyTo([searchLat, searchLng], 16, { duration: 1.5 });
             document.getElementById('custom-search').value = ""; 
 
-        } catch (err) { console.error("Search failed", err); alert("Search engine temporarily disconnected."); }
+        } catch (err) { 
+            console.error("Google Geocoding failed", err); 
+            alert("Search engine temporarily disconnected."); 
+        }
     };
 
     document.getElementById("custom-search").addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); window.executeSearch(); } });
