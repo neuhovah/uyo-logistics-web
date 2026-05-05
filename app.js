@@ -266,8 +266,11 @@ function bootCommandCenter() {
             const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchString)}&bounds=${bounds}&key=${GOOGLE_API_KEY}`);
             const data = await res.json();
             
+            // 🚨 CRITICAL FIX: Expose Google's internal error codes
             if (data.status !== "OK" || data.results.length === 0) { 
-                alert("Location not found via Google. Try adding a nearby landmark."); 
+                console.error("🔍 Google API Response:", data);
+                const errorReason = data.error_message ? `\n\nGoogle says: ${data.error_message}` : "";
+                alert(`⚠️ Search Failed!\nStatus: ${data.status}${errorReason}`); 
                 return; 
             }
 
