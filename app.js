@@ -984,8 +984,9 @@ function bootCommandCenter() {
 // --- 14. CLIENT-SIDE CSV MANIFEST EXPORT (BYPASSES SERVERLESS LIMITS) ---
 // ==============================================================================
 window.downloadSurveyManifest = function(routeData, opIntelData) {
-    // 1. Replicate Exact Original Headers (TABLE FIRST)
-    let csvContent = "Vehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
+    // 1. Replicate Exact Original Headers
+    // 🚨 CRITICAL FIX: Added \uFEFF (UTF-8 BOM) so Excel/WPS correctly renders the Naira (₦) symbol
+    let csvContent = "\uFEFFVehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
 
     const routesArray = routeData.routes || routeData.optimized_routes || [];
     
@@ -993,7 +994,6 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
         const vehicleId = route.vehicle_id || route.id || "UYO-VEH-1";
         const vehicleType = route.vehicle_type || route.type || "van";
         
-        // Dynamically map details to support various backend payload structures
         let details = route.route_details;
         if (!details && route.route) {
             details = route.route.map((nodeId, idx) => {
@@ -1029,19 +1029,22 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
         });
     });
 
-    // 2. Replicate the Exact BI Summary Block (BOTTOM)
+    // 2. Replicate the Exact BI Summary Block
     csvContent += ",,,,,,,\n"; 
     csvContent += "--- EXECUTIVE BI SUMMARY ---,,,,,,,\n";
     
-    csvContent += `Total Orders Dispatched,${opIntelData.drops || 0} Drops,,,,,,\n`;
-    csvContent += `Total Fleet Operation Time,${opIntelData.total_mins || 0} Mins,,,,,,\n`;
-    csvContent += `Estimated Fuel Savings,${opIntelData.fuel_saved || '₦0'},,,,,,\n`;
-    csvContent += `Fleet Efficiency Score,${opIntelData.efficiency || '0'}%,,,,,,\n`;
-    csvContent += `CO2 Emission Offset,${opIntelData.co2_saved || '0 kg'},,,,,,\n`;
+    // 🚨 CRITICAL FIX: Wrapped all metric variables in double quotes ""
+    // This prevents numbers like "2,101" from splitting into multiple columns.
+    // Also removed the hardcoded '%' from Efficiency since it is scraped from the UI.
+    csvContent += `Total Orders Dispatched,"${opIntelData.drops || 0} Drops",,,,,,\n`;
+    csvContent += `Total Fleet Operation Time,"${opIntelData.total_mins || 0} Mins",,,,,,\n`;
+    csvContent += `Estimated Fuel Savings,"${opIntelData.fuel_saved || '₦0'}",,,,,,\n`;
+    csvContent += `Fleet Efficiency Score,"${opIntelData.efficiency || '0%'}",,,,,,\n`;
+    csvContent += `CO2 Emission Offset,"${opIntelData.co2_saved || '0 kg'}",,,,,,\n`;
     
     const now = new Date();
     const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
-    csvContent += `Optimization Timestamp,${timestamp},,,,,,\n`;
+    csvContent += `Optimization Timestamp,"${timestamp}",,,,,,\n`;
 
     // 3. Create raw Data Blob and Trigger Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
