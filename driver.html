@@ -64,7 +64,8 @@
 
     <script>
         // --- SECURE ENTERPRISE DOMAIN UPGRADE ---
-        const API_BASE_URL = "https://api.uyologistics.com";
+        // 🚨 CRITICAL FIX: Swapped to Production Domains (Vercel Reverse Proxy enabled)
+        const API_BASE_URL = "";
         
         const urlParams = new URLSearchParams(window.location.search);
         const vehicleId = urlParams.get('v') || "UNKNOWN-VEH";

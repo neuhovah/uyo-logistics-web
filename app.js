@@ -379,7 +379,7 @@ function bootCommandCenter() {
                     'x-license-key': currentLicenseKey
                 }, 
                 body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }),
-                signal: controller.signal // <-- Attach the signal here
+                signal: controller.signal
             });
             
             clearTimeout(timeoutId); // Network succeeded, cancel the timeout killer
@@ -409,6 +409,10 @@ function bootCommandCenter() {
             }
             
             const data = await response.json();
+            
+            // Store globally for the Client-Side CSV Exporter
+            window.latestOptimizationResult = data;
+            
             routeLayerGroup.clearLayers(); 
             unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
@@ -422,7 +426,8 @@ function bootCommandCenter() {
             window.currentMissionMins = backendOptimizedMins;
             window.currentBaselineMins = data.empirical_baseline || 0;
             
-            if (data.report_url) {
+            // 🚨 CRITICAL FIX: Replaced Server-Side Route Pathing with Dynamic Client Blob Loading
+            if (data.routes || data.report_url) {
                 const reportContainer = document.getElementById("report-container");
                 const downloadBtn = document.getElementById("download-report-btn");
                 
@@ -431,10 +436,16 @@ function bootCommandCenter() {
                     const sidebar = document.querySelector('.col-span-3');
                     if (sidebar) sidebar.scrollTop = 0;
                     
+                    // Overwrite default onclick to use our new Survey Manifest exporter
                     downloadBtn.onclick = function() {
-                        const reportPath = data.report_url.startsWith('/') ? data.report_url : '/' + data.report_url;
-                        const fullUrl = data.report_url.startsWith('http') ? data.report_url : `${API_BASE_URL}${reportPath}`;
-                        window.open(fullUrl, "_blank");
+                        const currentOpIntel = {
+                            fuel_saved: document.getElementById("stat-fuel") ? document.getElementById("stat-fuel").innerText : "₦0",
+                            efficiency: document.getElementById("stat-efficiency") ? document.getElementById("stat-efficiency").innerText : "0%",
+                            co2_saved: document.getElementById("stat-co2") ? document.getElementById("stat-co2").innerText : "0 kg",
+                            drops: data.routes.reduce((acc, route) => acc + (route.route ? route.route.length - 2 : 0), 0),
+                            total_mins: window.currentMissionMins ? window.currentMissionMins.toFixed(2) : 0
+                        };
+                        window.downloadSurveyManifest(data, currentOpIntel);
                     };
                 }
             }
@@ -442,7 +453,6 @@ function bootCommandCenter() {
             await renderRoutes(data.routes, { depot: depotLocation, deliveries: dynamicDeliveries });
 
         } catch (error) { 
-            // 🚨 NEW FIX: Handle the timeout gracefully
             if (error.name === 'AbortError') {
                 alert("⚠️ Network Timeout: Connection to the Uyo Logistics cloud was lost. Please check your internet and try again.");
             } else {
@@ -969,3 +979,81 @@ function bootCommandCenter() {
         }
     };
 }
+
+// ==============================================================================
+// --- 14. CLIENT-SIDE CSV MANIFEST EXPORT (BYPASSES SERVERLESS LIMITS) ---
+// ==============================================================================
+window.downloadSurveyManifest = function(routeData, opIntelData) {
+    // 1. Replicate Exact Original Headers (TABLE FIRST)
+    let csvContent = "Vehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
+
+    const routesArray = routeData.routes || routeData.optimized_routes || [];
+    
+    routesArray.forEach(route => {
+        const vehicleId = route.vehicle_id || route.id || "UYO-VEH-1";
+        const vehicleType = route.vehicle_type || route.type || "van";
+        
+        // Dynamically map details to support various backend payload structures
+        let details = route.route_details;
+        if (!details && route.route) {
+            details = route.route.map((nodeId, idx) => {
+                return {
+                    stop_sequence: idx,
+                    node_id: nodeId,
+                    arrival_time: "Calculated Live",
+                    demand: (idx === 0 || idx === route.route.length - 1) ? 0 : 1,
+                    cumulative_mins: 0
+                };
+            });
+        }
+
+        if (!details) return;
+
+        const maxSeq = details.length - 1; 
+
+        details.forEach(stop => {
+            let status = "On Route";
+            if (stop.stop_sequence === maxSeq) status = "Return to Depot";
+
+            let row = [
+                vehicleId,
+                vehicleType,
+                stop.stop_sequence,
+                stop.arrival_time || "00:00 AM",
+                stop.node_id,
+                stop.demand || stop.inventory_load || 0,
+                Number(stop.cumulative_mins || 0).toFixed(2),
+                status
+            ].join(",");
+            csvContent += row + "\n";
+        });
+    });
+
+    // 2. Replicate the Exact BI Summary Block (BOTTOM)
+    csvContent += ",,,,,,,\n"; 
+    csvContent += "--- EXECUTIVE BI SUMMARY ---,,,,,,,\n";
+    
+    csvContent += `Total Orders Dispatched,${opIntelData.drops || 0} Drops,,,,,,\n`;
+    csvContent += `Total Fleet Operation Time,${opIntelData.total_mins || 0} Mins,,,,,,\n`;
+    csvContent += `Estimated Fuel Savings,${opIntelData.fuel_saved || '₦0'},,,,,,\n`;
+    csvContent += `Fleet Efficiency Score,${opIntelData.efficiency || '0'}%,,,,,,\n`;
+    csvContent += `CO2 Emission Offset,${opIntelData.co2_saved || '0 kg'},,,,,,\n`;
+    
+    const now = new Date();
+    const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
+    csvContent += `Optimization Timestamp,${timestamp},,,,,,\n`;
+
+    // 3. Create raw Data Blob and Trigger Download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    
+    const filenameId = Math.floor(Math.random() * 900000) + 100000; 
+    link.setAttribute("download", `Uyo_Logistics_Report_${filenameId}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
