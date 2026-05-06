@@ -684,8 +684,6 @@ function bootCommandCenter() {
 
     // --- 10. BACKEND MISSION DEPLOYMENT (ENTERPRISE SAAS) ---
     window.deployMission = async function(vehicleId, gmapsUrl) {
-        // 🚨 CRITICAL FIX: Open the tab instantly to bypass popup blockers
-        const newTab = window.open('about:blank', '_blank'); 
         
         const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
         
@@ -697,6 +695,7 @@ function bootCommandCenter() {
         );
         const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
 
+        // 🚨 THE FIX: Ask for confirmations FIRST while the dashboard is still the active, front-facing tab
         const userChoice = confirm(
             `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
             `This will initiate live tracking and record the mission.\n\n` +
@@ -704,11 +703,13 @@ function bootCommandCenter() {
         );
 
         if (!userChoice) {
-            newTab.close(); // Kill the blank tab if they cancel the mission
-            return;
+            return; // Exit immediately without opening any tabs
         }
 
         const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
+
+        // 🚨 NOW open the blank tab (Browser will allow this because the user just interacted with the confirm box)
+        const newTab = window.open('about:blank', '_blank'); 
 
         try {
             const coords = window.activeDeployments[vehicleId];
