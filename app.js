@@ -247,38 +247,98 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. NATIVE SEARCH BAR ENGINE (GOOGLE PLACES API - TEXT SEARCH) ---
+    // --- 7. NATIVE SEARCH BAR ENGINE (LOCAL-FIRST + GOOGLE FALLBACK) ---
     window.executeSearch = async function() {
         const query = document.getElementById('custom-search').value.trim();
         if (!query) return;
 
+        // HELPER: Keeps code DRY by standardizing pin deployment
+        const dropDispatchedPin = (lat, lng, name, address) => {
+            const targetLatLng = L.latLng(lat, lng);
+            let isInside = false;
+
+            if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
+                isInside = boundaryLayer.getLayers()[0].getBounds().pad(0.4).contains(targetLatLng);
+            } else {
+                isInside = uyoMathematicalBounds.pad(0.4).contains(targetLatLng);
+            }
+
+            if (!isInside) { 
+                alert(`⚠️ Location "${name}" (${address}) is too far outside the Uyo service boundary.`); 
+                return false; 
+            }
+
+            const dropId = "Search_" + Math.floor(Math.random() * 10000);
+            dynamicDeliveries.push({ id: dropId, lat: lat, lon: lng, weight: 1 });
+
+            const popupContent = `
+                <div style="text-align: center;">
+                    <b style="color: #1f2937;">Dispatched to:</b><br>
+                    <span style="font-size: 11px; font-weight: bold;">${name}</span><br>
+                    <span style="font-size: 10px; color: #4b5563;">${address}</span><br>
+                    <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                        <i class="fa-solid fa-trash"></i> Remove Drop
+                    </button>
+                </div>
+            `;
+
+            L.marker([lat, lng], { 
+                dropId: dropId,
+                icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
+                pane: 'poiPane' 
+            }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
+            
+            map.flyTo([lat, lng], 16, { duration: 1.5 });
+            document.getElementById('custom-search').value = "";
+            return true;
+        };
+
+        // --- PHASE 1: LOCAL DATABASE INTERCEPTOR ---
+        // Bypasses Google if the Landmark exists in your verified POI DB
+        let localMatch = false;
+        const lowerQuery = query.toLowerCase();
+        
+        poiLayer.eachLayer(layer => {
+            if (localMatch) return; 
+            const props = layer.feature.properties;
+            // Catch variations of name fields common in GIS datasets
+            const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
+            
+            if (poiName && poiName.includes(lowerQuery)) {
+                const latlng = layer.getLatLng();
+                console.log("✅ Match found in Local Database, bypassing Google.");
+                localMatch = dropDispatchedPin(latlng.lat, latlng.lng, props.name || query, "Local Verified POI");
+            }
+        });
+
+        if (localMatch) return; // Exit early if we successfully deployed from local DB
+
+        // --- PHASE 2: GOOGLE PLACES API FALLBACK ---
         // 🚨 CRITICAL: Paste your restricted Google API Key here
         const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
         
         try {
-            // Append context for better fuzzy matching
             const searchString = query.toLowerCase().includes('uyo') ? query : `${query}, Uyo, Akwa Ibom`;
 
-            // Define the survey-grade bounding box for Uyo (Places API format)
-            const locationBias = {
+            // 🚨 CRITICAL FIX: Enforced Location Restriction
+            // We tightened the bounding box to specifically filter out false-positives in rural northern LGAs like Oko Ita
+            const locationRestriction = {
                 rectangle: {
-                    low: { latitude: 4.9000, longitude: 7.8000 },  // SouthWest limits
-                    high: { latitude: 5.1500, longitude: 8.1000 }  // NorthEast limits
+                    low: { latitude: 4.9500, longitude: 7.8500 },  // Tighter SouthWest
+                    high: { latitude: 5.1000, longitude: 8.0500 }  // Tighter NorthEast
                 }
             };
 
             const payload = {
                 textQuery: searchString,
-                locationBias: locationBias
+                locationRestriction: locationRestriction // Forces Google to discard corrupted points outside this box
             };
 
-            // Call the NEW Places API (Text Search)
             const res = await fetch(`https://places.googleapis.com/v1/places:searchText`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': GOOGLE_API_KEY,
-                    // FieldMask ensures we only request (and pay for) the exact data we need
                     'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' 
                 },
                 body: JSON.stringify(payload)
@@ -286,7 +346,6 @@ function bootCommandCenter() {
 
             const data = await res.json();
             
-            // Expose Google's internal error codes (Diagnostic Engine)
             if (!res.ok || !data.places || data.places.length === 0) { 
                 console.error("🔍 Google Places API Response:", data);
                 const errorReason = data.error ? `\n\nGoogle says: ${data.error.message}` : "";
@@ -294,55 +353,13 @@ function bootCommandCenter() {
                 return; 
             }
 
-            // Extract the top result's precise coordinates
             const bestResult = data.places[0];
             const searchLat = parseFloat(bestResult.location.latitude.toFixed(6)); 
             const searchLng = parseFloat(bestResult.location.longitude.toFixed(6));
-
-            // Create a clean display name using the new Places data structure
             const placeName = bestResult.displayName ? bestResult.displayName.text : query;
             const shortAddress = bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo";
 
-            // 🚨 CRITICAL FIX: The Real Perimeter Geofence
-            // Leaflet's .pad() method expands by a PERCENTAGE of the bounding box size.
-            // Using 0.4 expands the boundary by 40% outward (approx. 5-7km safety buffer).
-            let isInside = false;
-            const targetLatLng = L.latLng(searchLat, searchLng);
-
-            if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
-                isInside = boundaryLayer.getLayers()[0].getBounds().pad(0.4).contains(targetLatLng);
-            } else {
-                isInside = uyoMathematicalBounds.contains(targetLatLng);
-            }
-
-            if (!isInside) { 
-                // Updated alert to explicitly show the Place Name instead of just the road string
-                alert(`⚠️ Google found "${placeName}" (${shortAddress}), but it is too far outside the Uyo service boundary.`); 
-                return; 
-            }
-
-            const dropId = "Search_" + Math.floor(Math.random() * 10000);
-            dynamicDeliveries.push({ id: dropId, lat: searchLat, lon: searchLng, weight: 1 });
-
-            const popupContent = `
-                <div style="text-align: center;">
-                    <b style="color: #1f2937;">Dispatched to:</b><br>
-                    <span style="font-size: 11px; font-weight: bold;">${placeName}</span><br>
-                    <span style="font-size: 10px; color: #4b5563;">${shortAddress}</span><br>
-                    <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                        <i class="fa-solid fa-trash"></i> Remove Drop
-                    </button>
-                </div>
-            `;
-
-            L.marker([searchLat, searchLng], { 
-                dropId: dropId,
-                icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
-                pane: 'poiPane' 
-            }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
-            
-            map.flyTo([searchLat, searchLng], 16, { duration: 1.5 });
-            document.getElementById('custom-search').value = ""; 
+            dropDispatchedPin(searchLat, searchLng, placeName, shortAddress);
 
         } catch (err) { 
             console.error("Google Places failed", err); 
