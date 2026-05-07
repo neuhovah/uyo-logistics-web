@@ -212,7 +212,7 @@ function bootCommandCenter() {
     map.on('click', function(e) {
         // 🚨 CRITICAL FIX: Titanium Geofencing (Fail-Closed)
         let isInside = false;
-        if (boundaryLayer.getLayers().length > 0) {
+        if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
             isInside = boundaryLayer.getLayers()[0].getBounds().contains(e.latlng);
         } else {
             // Fallback to strict mathematical box if DB layer is offline
@@ -286,7 +286,7 @@ function bootCommandCenter() {
 
             const data = await res.json();
             
-            // 🚨 CRITICAL FIX: Expose Google's internal error codes (Diagnostic Engine)
+            // Expose Google's internal error codes (Diagnostic Engine)
             if (!res.ok || !data.places || data.places.length === 0) { 
                 console.error("🔍 Google Places API Response:", data);
                 const errorReason = data.error ? `\n\nGoogle says: ${data.error.message}` : "";
@@ -299,25 +299,30 @@ function bootCommandCenter() {
             const searchLat = parseFloat(bestResult.location.latitude.toFixed(6)); 
             const searchLng = parseFloat(bestResult.location.longitude.toFixed(6));
 
-            // 🚨 CRITICAL FIX: Titanium Geofencing for Search
+            // Create a clean display name using the new Places data structure
+            const placeName = bestResult.displayName ? bestResult.displayName.text : query;
+            const shortAddress = bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo";
+
+            // 🚨 CRITICAL FIX: The Real Perimeter Geofence
+            // Leaflet's .pad() method expands by a PERCENTAGE of the bounding box size.
+            // Using 0.4 expands the boundary by 40% outward (approx. 5-7km safety buffer).
             let isInside = false;
-            if (boundaryLayer.getLayers().length > 0) {
-                isInside = boundaryLayer.getLayers()[0].getBounds().contains([searchLat, searchLng]);
+            const targetLatLng = L.latLng(searchLat, searchLng);
+
+            if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
+                isInside = boundaryLayer.getLayers()[0].getBounds().pad(0.4).contains(targetLatLng);
             } else {
-                isInside = uyoMathematicalBounds.contains([searchLat, searchLng]);
+                isInside = uyoMathematicalBounds.contains(targetLatLng);
             }
 
             if (!isInside) { 
-                alert(`⚠️ Google found "${bestResult.formattedAddress}", but it is outside the Uyo service boundary.`); 
+                // Updated alert to explicitly show the Place Name instead of just the road string
+                alert(`⚠️ Google found "${placeName}" (${shortAddress}), but it is too far outside the Uyo service boundary.`); 
                 return; 
             }
 
             const dropId = "Search_" + Math.floor(Math.random() * 10000);
             dynamicDeliveries.push({ id: dropId, lat: searchLat, lon: searchLng, weight: 1 });
-
-            // Create a clean display name using the new Places data structure
-            const placeName = bestResult.displayName ? bestResult.displayName.text : query;
-            const shortAddress = bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo";
 
             const popupContent = `
                 <div style="text-align: center;">
