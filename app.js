@@ -9,9 +9,10 @@
 // v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError.
 // v2.0.4: Federated Consensus Engine - Parallel fetching (Local+OSM+Google).
 // v2.0.5: Forced Vercel Sync & DOM Safety.
-// v2.0.6: Indestructible Search UI (Failed due to mobile viewport heights).
-// v2.0.7: Mobile UX Overhaul (Failed due to overflow and POI crashes).
-// v2.0.8: Native Leaflet UI Integration - Migrated Search to L.Control, fixed undefined properties crash, restored topright layers.
+// v2.0.6: Indestructible Search UI.
+// v2.0.7: Mobile UX Overhaul.
+// v2.0.8: Native Leaflet UI Integration.
+// v2.0.9: Search Engine Stabilization - Removed silent GeoJSON bounding crashes and fixed CSS overflow clipping on dropdowns.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -51,7 +52,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0.8 LOADED - Native Leaflet UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.0.9 LOADED - Stabilized Search Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -110,7 +111,6 @@ function bootCommandCenter() {
         "Accessibility": accessibilityLayer
     };
     
-    // 🚨 FIX: Moved back to topright. It will auto-collapse on mobile to save space and won't get cut off.
     const isMobile = window.innerWidth < 768;
     L.control.layers(baseMaps, overlayMaps, { 
         position: 'topright', 
@@ -249,18 +249,17 @@ function bootCommandCenter() {
         
         dropdownMenu = document.createElement('div');
         dropdownMenu.id = 'search-dropdown';
-        dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:2000; border-radius:0 0 8px 8px; box-shadow:0 10px 20px rgba(0,0,0,0.6); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
+        // 🚨 FIX: Aggressive CSS to ensure the dropdown breaks out of any hidden containers
+        dropdownMenu.style.cssText = 'position:absolute; top:calc(100% + 5px); left:0; width:100%; background:#1f2937; color:white; z-index:9999; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.8); display:none; max-height:300px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif; pointer-events:auto;';
         searchContainer.appendChild(dropdownMenu);
 
-        // 🚨 FIX: Extract search container from HTML flow and inject it natively into Leaflet
         if (searchContainer.parentNode) {
             searchContainer.parentNode.removeChild(searchContainer);
         }
 
         const NativeSearchControl = L.Control.extend({
-            options: { position: 'topleft' }, // Places it opposite the layer controls
+            options: { position: 'topleft' }, 
             onAdd: function() {
-                // Strip out all the buggy absolute positioning
                 searchContainer.style.position = 'relative'; 
                 searchContainer.style.top = 'auto';
                 searchContainer.style.left = 'auto';
@@ -269,7 +268,10 @@ function bootCommandCenter() {
                 searchContainer.style.margin = '10px';
                 searchContainer.style.zIndex = 'auto'; 
                 
-                // Prevent map clicks from firing when clicking the search bar
+                // 🚨 FIX: Prevent Tailwind from clipping the dropdown menu
+                searchContainer.classList.remove('overflow-hidden');
+                searchContainer.style.overflow = 'visible';
+                
                 L.DomEvent.disableClickPropagation(searchContainer);
                 L.DomEvent.disableScrollPropagation(searchContainer);
                 
@@ -298,131 +300,149 @@ function bootCommandCenter() {
         let combinedResults = [];
         const lowerQuery = query.toLowerCase();
 
-        // 🚨 FIX: Strict optional chaining to prevent undefined property crashes
-        poiLayer.eachLayer(layer => {
-            const props = layer?.feature?.properties;
-            if (!props) return; // Safely skip malformed data
-            
-            const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
-            if (poiName.includes(lowerQuery)) {
-                combinedResults.push({
-                    lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
-                    name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
-                });
-            }
-        });
-
-        const searchPromises = [];
-
-        searchPromises.push(
-            fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)},Uyo,Akwa Ibom&format=json&limit=3`)
-            .then(res => res.json())
-            .then(data => {
-                if(data && data.length) {
-                    data.forEach(item => {
-                        combinedResults.push({
-                            lat: parseFloat(item.lat), lng: parseFloat(item.lon),
-                            name: item.name || query, address: item.display_name.split(',')[0] + " (OSM)", source: "NOMINATIM", icon: "fa-road"
-                        });
+        try {
+            // --- SOURCE 1: LOCAL DATABASE ---
+            poiLayer.eachLayer(layer => {
+                const props = layer?.feature?.properties;
+                if (!props) return; 
+                
+                const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
+                if (poiName.includes(lowerQuery)) {
+                    combinedResults.push({
+                        lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
+                        name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
                     });
                 }
-            }).catch(err => console.warn("Nominatim failed:", err))
-        );
+            });
 
-        const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
-        const locationRestriction = { rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } } };
-        
-        searchPromises.push(
-            fetch(`https://places.googleapis.com/v1/places:searchText`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_API_KEY, 'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' },
-                body: JSON.stringify({ textQuery: lowerQuery.includes('uyo') ? query : `${query}, Uyo`, locationRestriction: locationRestriction })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data && data.places) {
-                    data.places.slice(0, 3).forEach(place => {
-                        if(place.location) {
+            // --- SOURCE 2 & 3: NOMINATIM & GOOGLE ---
+            const searchPromises = [];
+
+            searchPromises.push(
+                fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)},Uyo,Akwa Ibom&format=json&limit=3`)
+                .then(res => res.json())
+                .then(data => {
+                    if(data && data.length) {
+                        data.forEach(item => {
                             combinedResults.push({
-                                lat: parseFloat(place.location.latitude.toFixed(6)), lng: parseFloat(place.location.longitude.toFixed(6)),
-                                name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
+                                lat: parseFloat(item.lat), lng: parseFloat(item.lon),
+                                name: item.name || query, address: item.display_name.split(',')[0] + " (OSM)", source: "NOMINATIM", icon: "fa-road"
                             });
-                        }
-                    });
-                }
-            }).catch(err => console.warn("Google failed:", err))
-        );
+                        });
+                    }
+                }).catch(err => console.warn("Nominatim failed:", err))
+            );
 
-        await Promise.allSettled(searchPromises);
-        if (btn) btn.innerHTML = originalBtnHtml;
+            const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
+            const locationRestriction = { rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } } };
+            
+            searchPromises.push(
+                fetch(`https://places.googleapis.com/v1/places:searchText`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_API_KEY, 'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' },
+                    body: JSON.stringify({ textQuery: lowerQuery.includes('uyo') ? query : `${query}, Uyo`, locationRestriction: locationRestriction })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.places) {
+                        data.places.slice(0, 3).forEach(place => {
+                            if(place.location) {
+                                combinedResults.push({
+                                    lat: parseFloat(place.location.latitude), lng: parseFloat(place.location.longitude),
+                                    name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
+                                });
+                            }
+                        });
+                    }
+                }).catch(err => console.warn("Google failed:", err))
+            );
 
-        // --- FILTER & RENDER DISAMBIGUATION MENU ---
-        combinedResults = combinedResults.filter(res => {
-            const targetLatLng = L.latLng(res.lat, res.lng);
-            if (boundaryLayer.getLayers().length > 0) {
-                const bLayer = boundaryLayer.getLayers()[0];
-                if (bLayer && bLayer.getBounds) {
-                    return bLayer.getBounds().pad(0.4).contains(targetLatLng);
+            await Promise.allSettled(searchPromises);
+
+            // 🚨 FIX: Removed dynamic layer math that causes silent crashes. Used strict math.
+            const safeBounds = uyoMathematicalBounds.pad(0.5); 
+            
+            let uniqueResults = [];
+            
+            combinedResults.forEach(res => {
+                if(!res.lat || !res.lng || isNaN(res.lat) || isNaN(res.lng)) return; 
+                
+                const targetLatLng = L.latLng(res.lat, res.lng);
+                if (safeBounds.contains(targetLatLng)) {
+                    // Prevent duplicate pins from different APIs
+                    const isDuplicate = uniqueResults.some(u => Math.abs(u.lat - res.lat) < 0.001 && Math.abs(u.lng - res.lng) < 0.001);
+                    if (!isDuplicate) uniqueResults.push(res);
                 }
+            });
+
+            // 🚨 FIX: Replaced Javascript Alert with an in-UI message
+            if (uniqueResults.length === 0) {
+                dropdownMenu.innerHTML = `
+                    <div style="padding:15px; text-align:center; color:#f87171; font-size:12px;">
+                        <i class="fa-solid fa-triangle-exclamation mb-2 text-lg"></i><br>
+                        No verified addresses found for <b>"${query}"</b> inside the operational perimeter.
+                    </div>
+                `;
+                dropdownMenu.style.display = 'block';
+                return;
             }
-            return uyoMathematicalBounds.pad(0.4).contains(targetLatLng);
-        });
 
-        if (combinedResults.length === 0) {
-            alert(`⚠️ No safe coordinates found for "${query}" inside the Uyo perimeter.`);
-            return;
-        }
-
-        combinedResults.forEach(item => {
-            const opt = document.createElement('div');
-            opt.style.cssText = 'padding:10px; cursor:pointer; border-bottom:1px solid #374151; transition: background 0.2s;';
-            opt.onmouseover = () => opt.style.background = '#374151';
-            opt.onmouseout = () => opt.style.background = 'transparent';
-            
-            let sourceColor = item.source === 'LOCAL' ? '#4ade80' : (item.source === 'NOMINATIM' ? '#60a5fa' : '#f87171');
-            
-            opt.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>
+            uniqueResults.forEach(item => {
+                const opt = document.createElement('div');
+                opt.style.cssText = 'padding:12px; cursor:pointer; border-bottom:1px solid #374151; transition: background 0.2s; display:flex; justify-content:space-between; align-items:center;';
+                opt.onmouseover = () => opt.style.background = '#374151';
+                opt.onmouseout = () => opt.style.background = 'transparent';
+                
+                let sourceColor = item.source === 'LOCAL' ? '#4ade80' : (item.source === 'NOMINATIM' ? '#60a5fa' : '#f87171');
+                
+                opt.innerHTML = `
+                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 10px;">
                         <b style="font-size:13px; color:white;">${item.name}</b><br>
                         <span style="font-size:10px; color:#9ca3af;">${item.address}</span>
                     </div>
-                    <span style="font-size:9px; font-weight:bold; color:${sourceColor}; border:1px solid ${sourceColor}; padding:2px 4px; border-radius:3px;">
+                    <span style="font-size:9px; font-weight:bold; color:${sourceColor}; border:1px solid ${sourceColor}; padding:2px 4px; border-radius:3px; flex-shrink: 0;">
                         <i class="fa-brands ${item.icon}"></i> ${item.source}
                     </span>
-                </div>
-            `;
-
-            opt.onclick = () => {
-                dropdownMenu.style.display = 'none';
-                searchInput.value = item.name;
-                
-                const dropId = "Search_" + Math.floor(Math.random() * 10000);
-                dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: 1 });
-
-                const popupContent = `
-                    <div style="text-align: center;">
-                        <b style="color: #1f2937;">Dispatched to:</b><br>
-                        <span style="font-size: 11px; font-weight: bold;">${item.name}</span><br>
-                        <span style="font-size: 10px; color: #4b5563;">${item.address}</span><br>
-                        <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                            <i class="fa-solid fa-trash"></i> Remove Drop
-                        </button>
-                    </div>
                 `;
 
-                L.marker([item.lat, item.lng], { 
-                    dropId: dropId,
-                    icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
-                    pane: 'poiPane' 
-                }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
-                
-                map.flyTo([item.lat, item.lng], 16, { duration: 1.5 });
-            };
-            dropdownMenu.appendChild(opt);
-        });
+                opt.onclick = () => {
+                    dropdownMenu.style.display = 'none';
+                    searchInput.value = item.name;
+                    
+                    const dropId = "Search_" + Math.floor(Math.random() * 10000);
+                    dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: 1 });
 
-        dropdownMenu.style.display = 'block';
+                    const popupContent = `
+                        <div style="text-align: center;">
+                            <b style="color: #1f2937;">Dispatched to:</b><br>
+                            <span style="font-size: 11px; font-weight: bold;">${item.name}</span><br>
+                            <span style="font-size: 10px; color: #4b5563;">${item.address}</span><br>
+                            <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                                <i class="fa-solid fa-trash"></i> Remove Drop
+                            </button>
+                        </div>
+                    `;
+
+                    L.marker([item.lat, item.lng], { 
+                        dropId: dropId,
+                        icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
+                        pane: 'poiPane' 
+                    }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
+                    
+                    map.flyTo([item.lat, item.lng], 16, { duration: 1.5 });
+                };
+                dropdownMenu.appendChild(opt);
+            });
+
+            dropdownMenu.style.display = 'block';
+
+        } catch (err) {
+            console.error("Critical Search Failure:", err);
+            dropdownMenu.innerHTML = `<div style="padding:15px; text-align:center; color:#f87171; font-size:12px;">System Error: Could not parse geospatial data.</div>`;
+            dropdownMenu.style.display = 'block';
+        } finally {
+            if (btn) btn.innerHTML = originalBtnHtml;
+        }
     };
 
     document.addEventListener('click', (e) => {
