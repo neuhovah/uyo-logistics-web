@@ -2,6 +2,13 @@
 // UYO LOGISTICS INTELLIGENCE | MASTER COMMAND CENTER
 // 100% Survey-Grade Configuration (Deep Zoom, Individual Deletion, OSRM, BI, Search)
 // ==============================================================================
+//
+// 📋 CHANGELOG
+// v2.0.1: Geofence tuning - Increased boundary padding to 40% and enforced L.latLng type safety.
+// v2.0.2: Local-First Search - Intercepted queries with Foursquare POI layer before hitting Google APIs.
+// v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError and refined locationRestriction.
+// v2.0.4: Federated Consensus Engine - Parallel fetching (Local DB + Nominatim OSM + Google Places) with Dispatcher Disambiguation Dropdown to prevent API hallucination lawsuits.
+// ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
 const activeLicenseKey = localStorage.getItem('uyo_license_key');
@@ -43,7 +50,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0.3 LOADED - Federated Search Active");
+    console.log("🚀 Uyo Logistics Engine v2.0.4 LOADED - Federated Consensus Engine Active");
 
     // --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
     const uyoCenter = [5.0377, 7.9128];
@@ -232,139 +239,166 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. FEDERATED SEARCH ENGINE (LOCAL DB + GOOGLE PLACES) ---
+    // --- 7. FEDERATED CONSENSUS ENGINE (LOCAL + NOMINATIM + GOOGLE) ---
+    const searchInput = document.getElementById('custom-search');
+    const searchContainer = searchInput.parentElement;
+    searchContainer.style.position = 'relative';
+    
+    // Create the Dropdown UI dynamically
+    const dropdownMenu = document.createElement('div');
+    dropdownMenu.id = 'search-dropdown';
+    dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:1000; border-radius:0 0 8px 8px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.5); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
+    searchContainer.appendChild(dropdownMenu);
+
     window.executeSearch = async function() {
-        const query = document.getElementById('custom-search').value.trim();
+        const query = searchInput.value.trim();
         if (!query) return;
 
-        // HELPER: Deploys the pin if it passes the boundary test. Returns boolean.
-        const dropDispatchedPin = (lat, lng, name, address, silent = false) => {
-            const targetLatLng = L.latLng(lat, lng);
-            let isInside = false;
+        const btn = searchContainer.querySelector('button');
+        const originalBtnHtml = btn.innerHTML;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
+        dropdownMenu.innerHTML = ''; 
+        dropdownMenu.style.display = 'none';
 
-            if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
-                isInside = boundaryLayer.getLayers()[0].getBounds().pad(0.4).contains(targetLatLng);
-            } else {
-                isInside = uyoMathematicalBounds.pad(0.4).contains(targetLatLng);
-            }
-
-            if (!isInside) { 
-                if (!silent) alert(`⚠️ Location "${name}" (${address}) is too far outside the Uyo service boundary.`); 
-                return false; 
-            }
-
-            const dropId = "Search_" + Math.floor(Math.random() * 10000);
-            dynamicDeliveries.push({ id: dropId, lat: lat, lon: lng, weight: 1 });
-
-            const popupContent = `
-                <div style="text-align: center;">
-                    <b style="color: #1f2937;">Dispatched to:</b><br>
-                    <span style="font-size: 11px; font-weight: bold;">${name}</span><br>
-                    <span style="font-size: 10px; color: #4b5563;">${address}</span><br>
-                    <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                        <i class="fa-solid fa-trash"></i> Remove Drop
-                    </button>
-                </div>
-            `;
-
-            L.marker([lat, lng], { 
-                dropId: dropId,
-                icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
-                pane: 'poiPane' 
-            }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
-            
-            map.flyTo([lat, lng], 16, { duration: 1.5 });
-            document.getElementById('custom-search').value = "";
-            return true;
-        };
-
-        // --- STEP 1: SCAN LOCAL DATABASE SAFELY ---
-        let localMatch = null;
+        let combinedResults = [];
         const lowerQuery = query.toLowerCase();
-        
+
+        // --- SOURCE 1: LOCAL DATABASE SCAN (Synchronous & Fastest) ---
         poiLayer.eachLayer(layer => {
-            if (localMatch) return; 
-            
-            // 🚨 CRITICAL BUG FIX: Ensure the layer actually has GeoJSON properties to prevent TypeError crashes
             if (layer.feature && layer.feature.properties) {
                 const props = layer.feature.properties;
                 const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
-                
-                if (poiName && poiName.includes(lowerQuery)) {
-                    localMatch = {
-                        lat: layer.getLatLng().lat,
-                        lng: layer.getLatLng().lng,
-                        name: props.name || query,
-                        address: "Uyo Local Database (2023)"
-                    };
+                if (poiName.includes(lowerQuery)) {
+                    combinedResults.push({
+                        lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
+                        name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
+                    });
                 }
             }
         });
 
-        // --- STEP 2: FETCH FRESH GOOGLE PLACES DATA ---
-        // 🚨 CRITICAL: Paste your restricted Google API Key here
+        // --- SOURCE 2 & 3: NOMINATIM & GOOGLE (Parallel Async Fetch) ---
+        const searchPromises = [];
+
+        // Nominatim (OpenStreetMap - Excellent for Nigerian Street Networks)
+        searchPromises.push(
+            fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)},Uyo,Akwa Ibom&format=json&limit=3`)
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(item => {
+                    combinedResults.push({
+                        lat: parseFloat(item.lat), lng: parseFloat(item.lon),
+                        name: item.name || query, address: item.display_name.split(',')[0] + " (OSM)", source: "NOMINATIM", icon: "fa-road"
+                    });
+                });
+            }).catch(err => console.warn("Nominatim failed:", err))
+        );
+
+        // Google Places API (Excellent for Businesses)
         const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
-        let googleMatch = null;
-
-        try {
-            const searchString = query.toLowerCase().includes('uyo') ? query : `${query}, Uyo, Akwa Ibom`;
-            const locationRestriction = {
-                rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } }
-            };
-
-            const payload = { textQuery: searchString, locationRestriction: locationRestriction };
-
-            const res = await fetch(`https://places.googleapis.com/v1/places:searchText`, {
+        const locationRestriction = { rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } } };
+        
+        searchPromises.push(
+            fetch(`https://places.googleapis.com/v1/places:searchText`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Goog-Api-Key': GOOGLE_API_KEY,
-                    'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' 
-                },
-                body: JSON.stringify(payload)
-            });
+                headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_API_KEY, 'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' },
+                body: JSON.stringify({ textQuery: lowerQuery.includes('uyo') ? query : `${query}, Uyo`, locationRestriction: locationRestriction })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.places) {
+                    data.places.slice(0, 3).forEach(place => {
+                        combinedResults.push({
+                            lat: parseFloat(place.location.latitude.toFixed(6)), lng: parseFloat(place.location.longitude.toFixed(6)),
+                            name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
+                        });
+                    });
+                }
+            }).catch(err => console.warn("Google failed:", err))
+        );
 
-            const data = await res.json();
+        await Promise.allSettled(searchPromises);
+        btn.innerHTML = originalBtnHtml;
+
+        // --- FILTER & RENDER DISAMBIGUATION MENU ---
+        combinedResults = combinedResults.filter(res => {
+            const targetLatLng = L.latLng(res.lat, res.lng);
+            if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
+                return boundaryLayer.getLayers()[0].getBounds().pad(0.4).contains(targetLatLng);
+            }
+            return uyoMathematicalBounds.pad(0.4).contains(targetLatLng);
+        });
+
+        if (combinedResults.length === 0) {
+            alert(`⚠️ No safe coordinates found for "${query}" inside the Uyo perimeter.`);
+            return;
+        }
+
+        combinedResults.forEach(item => {
+            const opt = document.createElement('div');
+            opt.style.cssText = 'padding:10px; cursor:pointer; border-bottom:1px solid #374151; transition: background 0.2s;';
+            opt.onmouseover = () => opt.style.background = '#374151';
+            opt.onmouseout = () => opt.style.background = 'transparent';
             
-            if (res.ok && data.places && data.places.length > 0) { 
-                const bestResult = data.places[0];
-                googleMatch = {
-                    lat: parseFloat(bestResult.location.latitude.toFixed(6)),
-                    lng: parseFloat(bestResult.location.longitude.toFixed(6)),
-                    name: bestResult.displayName ? bestResult.displayName.text : query,
-                    address: bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo"
-                };
-            }
-        } catch (err) { 
-            console.warn("Google Places query failed or timed out.", err); 
-        }
+            let sourceColor = item.source === 'LOCAL' ? '#4ade80' : (item.source === 'NOMINATIM' ? '#60a5fa' : '#f87171');
+            
+            opt.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <b style="font-size:13px; color:white;">${item.name}</b><br>
+                        <span style="font-size:10px; color:#9ca3af;">${item.address}</span>
+                    </div>
+                    <span style="font-size:9px; font-weight:bold; color:${sourceColor}; border:1px solid ${sourceColor}; padding:2px 4px; border-radius:3px;">
+                        <i class="fa-brands ${item.icon}"></i> ${item.source}
+                    </span>
+                </div>
+            `;
 
-        // --- STEP 3: THE MERGE LOGIC (DECISION ENGINE) ---
-        // Attempt 1: Try Google first (fresher data) but quietly test it against our strict geofence
-        if (googleMatch) {
-            const isGoogleValid = dropDispatchedPin(googleMatch.lat, googleMatch.lng, googleMatch.name, googleMatch.address, true);
-            if (isGoogleValid) {
-                console.log("✅ Using fresh Google Places data.");
-                return; // Success! Exit early.
-            } else {
-                console.warn("⚠️ Google found it, but it was out of bounds. Falling back to Local DB.");
-            }
-        }
+            opt.onclick = () => {
+                dropdownMenu.style.display = 'none';
+                searchInput.value = item.name;
+                
+                const dropId = "Search_" + Math.floor(Math.random() * 10000);
+                dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: 1 });
 
-        // Attempt 2: If Google failed completely OR returned rural coordinates, use the Local Safety Net
-        if (localMatch) {
-            const isLocalValid = dropDispatchedPin(localMatch.lat, localMatch.lng, localMatch.name, localMatch.address, false);
-            if (isLocalValid) {
-                console.log("✅ Using Local Foursquare 2023 Fallback.");
-                return; // Success! Exit early.
-            }
-        }
+                const popupContent = `
+                    <div style="text-align: center;">
+                        <b style="color: #1f2937;">Dispatched to:</b><br>
+                        <span style="font-size: 11px; font-weight: bold;">${item.name}</span><br>
+                        <span style="font-size: 10px; color: #4b5563;">${item.address}</span><br>
+                        <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                            <i class="fa-solid fa-trash"></i> Remove Drop
+                        </button>
+                    </div>
+                `;
 
-        // Attempt 3: Total Failure
-        alert(`⚠️ Search Failed! "${query}" could not be found within the Uyo service boundary via Google or Local Databases.`);
+                L.marker([item.lat, item.lng], { 
+                    dropId: dropId,
+                    icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
+                    pane: 'poiPane' 
+                }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
+                
+                map.flyTo([item.lat, item.lng], 16, { duration: 1.5 });
+            };
+            dropdownMenu.appendChild(opt);
+        });
+
+        dropdownMenu.style.display = 'block';
     };
 
-    document.getElementById("custom-search").addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); window.executeSearch(); } });
+    // Close dropdown if clicking outside
+    document.addEventListener('click', (e) => {
+        if (!searchContainer.contains(e.target)) {
+            dropdownMenu.style.display = 'none';
+        }
+    });
+
+    searchInput.addEventListener("keypress", function(event) { 
+        if (event.key === "Enter") { 
+            event.preventDefault(); 
+            window.executeSearch(); 
+        } 
+    });
 
     // 🚨 CRITICAL FIX: The Zombie WSS Line Killer
     window.clearUnassignedPins = function() { 
