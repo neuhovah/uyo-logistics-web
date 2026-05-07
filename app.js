@@ -4,13 +4,14 @@
 // ==============================================================================
 //
 // 📋 CHANGELOG
-// v2.0.1: Geofence tuning - Increased boundary padding to 40% and enforced L.latLng type safety.
-// v2.0.2: Local-First Search - Intercepted queries with Foursquare POI layer before hitting Google APIs.
-// v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError and refined locationRestriction.
-// v2.0.4: Federated Consensus Engine - Parallel fetching (Local+OSM+Google) with Disambiguation UI.
-// v2.0.5: Forced Vercel Sync & DOM Safety - Purged invisible chars and wrapped search UI in DOM readiness checks.
-// v2.0.6: Indestructible Search UI - Detached search bar from document flow (Caused regression).
-// v2.0.7: Mobile UX Overhaul - Restored DOM integrity, moved Layer Control to bottomleft, added mobile auto-collapse.
+// v2.0.1: Geofence tuning - Increased boundary padding to 40%.
+// v2.0.2: Local-First Search - Intercepted queries with Foursquare POI layer.
+// v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError.
+// v2.0.4: Federated Consensus Engine - Parallel fetching (Local+OSM+Google).
+// v2.0.5: Forced Vercel Sync & DOM Safety.
+// v2.0.6: Indestructible Search UI (Failed due to mobile viewport heights).
+// v2.0.7: Mobile UX Overhaul (Failed due to overflow and POI crashes).
+// v2.0.8: Native Leaflet UI Integration - Migrated Search to L.Control, fixed undefined properties crash, restored topright layers.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -22,10 +23,8 @@ if (!activeLicenseKey) {
 } else {
     console.log("🔄 Performing Background Validation Ping...");
     
-    // 1. Instantly boot the visual UI (Base Maps) so the screen layout doesn't break
     bootCommandCenter(); 
 
-    // 2. Fire the Gatekeeper ping silently in the background
     fetch("/api/vrp/history", {
         method: 'GET',
         headers: { 'x-license-key': activeLicenseKey }
@@ -49,19 +48,16 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    // --- DYNAMIC INFRASTRUCTURE CONFIG (CLOUD-READY) ---
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0.7 LOADED - Mobile UX Overhaul Active");
+    console.log("🚀 Uyo Logistics Engine v2.0.8 LOADED - Native Leaflet UI Active");
 
-    // --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
     const uyoCenter = [5.0377, 7.9128];
 
-    // --- SURVEY-GRADE GEOFENCE FALLBACK ---
     const uyoMathematicalBounds = L.latLngBounds(
-        L.latLng(4.9000, 7.8000), // SouthWest limits
-        L.latLng(5.1500, 8.1000)  // NorthEast limits
+        L.latLng(4.9000, 7.8000), 
+        L.latLng(5.1500, 8.1000)  
     );
 
     const darkMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
@@ -82,17 +78,14 @@ function bootCommandCenter() {
         maxNativeZoom: 20
     });
 
-    // --- 2. INITIALIZE MAP (GLOBAL CONSTRAINTS) ---
     const map = L.map('map', { center: uyoCenter, zoom: 13, maxZoom: 22, layers: [darkMap], zoomControl: false });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // --- 3. PROFESSIONAL GIS PANES ---
     map.createPane('accessibilityPane'); map.getPane('accessibilityPane').style.zIndex = 300;
     map.createPane('hotspotPane');       map.getPane('hotspotPane').style.zIndex = 310;
     map.createPane('routePane');         map.getPane('routePane').style.zIndex = 400; 
     map.createPane('poiPane');           map.getPane('poiPane').style.zIndex = 600; 
 
-    // --- 4. STATE & LAYER CONTAINERS ---
     let routeLayerGroup = L.layerGroup().addTo(map); 
     const hotspotLayer = L.layerGroup();
     const boundaryLayer = L.layerGroup();
@@ -117,14 +110,13 @@ function bootCommandCenter() {
         "Accessibility": accessibilityLayer
     };
     
-    // 🚨 FIX: Move layer control away from the top so it never conflicts with the search bar
+    // 🚨 FIX: Moved back to topright. It will auto-collapse on mobile to save space and won't get cut off.
     const isMobile = window.innerWidth < 768;
     L.control.layers(baseMaps, overlayMaps, { 
-        position: 'bottomleft', 
-        collapsed: isMobile // Auto-collapse on phones, open on desktop
+        position: 'topright', 
+        collapsed: isMobile 
     }).addTo(map);
 
-    // --- 5. DATA LOADING & NATIVE SYMBOLOGY ---
     const layerStyles = {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
         hotspots: { fillColor: "#ef4444", color: "transparent", fillOpacity: 0.5, interactive: false },
@@ -174,7 +166,7 @@ function bootCommandCenter() {
 
         fetchSpatialLayer('/pois', poiLayer, { 
             pointToLayer: (feature, latlng) => {
-                const category = String(feature.properties.amenity || feature.properties.cat_label || feature.properties.type || '').toLowerCase();
+                const category = String(feature.properties?.amenity || feature.properties?.cat_label || feature.properties?.type || '').toLowerCase();
                 let iconClass = 'fa-solid fa-map-pin'; let color = '#71717a'; 
                 if (category.includes('school') || category.includes('education')) { iconClass = 'fa-solid fa-graduation-cap'; color = '#3b82f6'; } 
                 else if (category.includes('health') || category.includes('hospit') || category.includes('clinic')) { iconClass = 'fa-solid fa-kit-medical'; color = '#ef4444'; } 
@@ -192,7 +184,6 @@ function bootCommandCenter() {
     }
     loadAllDatabaseLayers();
 
-    // --- 6. INTERACTIVE LOGIC ---
     let depotLocation = { lat: 5.0333, lon: 7.9266 };
     const depotIcon = L.divIcon({ className: 'depot', html: `<div style="background-color: #ffffff; border: 4px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; box-shadow: 0 0 20px rgba(59, 130, 246, 1);"></div>` });
     const depotMarker = L.marker([depotLocation.lat, depotLocation.lon], { icon: depotIcon, draggable: true, pane: 'poiPane' }).addTo(map);
@@ -248,7 +239,7 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. FEDERATED CONSENSUS ENGINE (LOCAL + NOMINATIM + GOOGLE) ---
+    // --- 7. FEDERATED CONSENSUS ENGINE (NATIVE LEAFLET CONTROL) ---
     const searchInput = document.getElementById('custom-search');
     let searchContainer = null;
     let dropdownMenu = null;
@@ -256,15 +247,36 @@ function bootCommandCenter() {
     if (searchInput) {
         searchContainer = searchInput.parentElement;
         
-        // 🚨 FIX: Reverted to natural document flow, simply applied a high z-index
-        searchContainer.style.position = 'relative';
-        searchContainer.style.zIndex = '2000';
-        
-        // Create the Dropdown UI dynamically safely
         dropdownMenu = document.createElement('div');
         dropdownMenu.id = 'search-dropdown';
         dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:2000; border-radius:0 0 8px 8px; box-shadow:0 10px 20px rgba(0,0,0,0.6); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
         searchContainer.appendChild(dropdownMenu);
+
+        // 🚨 FIX: Extract search container from HTML flow and inject it natively into Leaflet
+        if (searchContainer.parentNode) {
+            searchContainer.parentNode.removeChild(searchContainer);
+        }
+
+        const NativeSearchControl = L.Control.extend({
+            options: { position: 'topleft' }, // Places it opposite the layer controls
+            onAdd: function() {
+                // Strip out all the buggy absolute positioning
+                searchContainer.style.position = 'relative'; 
+                searchContainer.style.top = 'auto';
+                searchContainer.style.left = 'auto';
+                searchContainer.style.transform = 'none';
+                searchContainer.style.width = isMobile ? '65vw' : '350px';
+                searchContainer.style.margin = '10px';
+                searchContainer.style.zIndex = 'auto'; 
+                
+                // Prevent map clicks from firing when clicking the search bar
+                L.DomEvent.disableClickPropagation(searchContainer);
+                L.DomEvent.disableScrollPropagation(searchContainer);
+                
+                return searchContainer;
+            }
+        });
+        map.addControl(new NativeSearchControl());
     }
 
     window.executeSearch = async function() {
@@ -286,38 +298,37 @@ function bootCommandCenter() {
         let combinedResults = [];
         const lowerQuery = query.toLowerCase();
 
-        // --- SOURCE 1: LOCAL DATABASE SCAN (Synchronous & Fastest) ---
+        // 🚨 FIX: Strict optional chaining to prevent undefined property crashes
         poiLayer.eachLayer(layer => {
-            if (layer.feature && layer.feature.properties) {
-                const props = layer.feature.properties;
-                const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
-                if (poiName.includes(lowerQuery)) {
-                    combinedResults.push({
-                        lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
-                        name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
-                    });
-                }
+            const props = layer?.feature?.properties;
+            if (!props) return; // Safely skip malformed data
+            
+            const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
+            if (poiName.includes(lowerQuery)) {
+                combinedResults.push({
+                    lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
+                    name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
+                });
             }
         });
 
-        // --- SOURCE 2 & 3: NOMINATIM & GOOGLE (Parallel Async Fetch) ---
         const searchPromises = [];
 
-        // Nominatim (OpenStreetMap - Excellent for Nigerian Street Networks)
         searchPromises.push(
             fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)},Uyo,Akwa Ibom&format=json&limit=3`)
             .then(res => res.json())
             .then(data => {
-                data.forEach(item => {
-                    combinedResults.push({
-                        lat: parseFloat(item.lat), lng: parseFloat(item.lon),
-                        name: item.name || query, address: item.display_name.split(',')[0] + " (OSM)", source: "NOMINATIM", icon: "fa-road"
+                if(data && data.length) {
+                    data.forEach(item => {
+                        combinedResults.push({
+                            lat: parseFloat(item.lat), lng: parseFloat(item.lon),
+                            name: item.name || query, address: item.display_name.split(',')[0] + " (OSM)", source: "NOMINATIM", icon: "fa-road"
+                        });
                     });
-                });
+                }
             }).catch(err => console.warn("Nominatim failed:", err))
         );
 
-        // Google Places API (Excellent for Businesses)
         const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
         const locationRestriction = { rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } } };
         
@@ -329,12 +340,14 @@ function bootCommandCenter() {
             })
             .then(res => res.json())
             .then(data => {
-                if (data.places) {
+                if (data && data.places) {
                     data.places.slice(0, 3).forEach(place => {
-                        combinedResults.push({
-                            lat: parseFloat(place.location.latitude.toFixed(6)), lng: parseFloat(place.location.longitude.toFixed(6)),
-                            name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
-                        });
+                        if(place.location) {
+                            combinedResults.push({
+                                lat: parseFloat(place.location.latitude.toFixed(6)), lng: parseFloat(place.location.longitude.toFixed(6)),
+                                name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
+                            });
+                        }
                     });
                 }
             }).catch(err => console.warn("Google failed:", err))
@@ -346,8 +359,11 @@ function bootCommandCenter() {
         // --- FILTER & RENDER DISAMBIGUATION MENU ---
         combinedResults = combinedResults.filter(res => {
             const targetLatLng = L.latLng(res.lat, res.lng);
-            if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
-                return boundaryLayer.getLayers()[0].getBounds().pad(0.4).contains(targetLatLng);
+            if (boundaryLayer.getLayers().length > 0) {
+                const bLayer = boundaryLayer.getLayers()[0];
+                if (bLayer && bLayer.getBounds) {
+                    return bLayer.getBounds().pad(0.4).contains(targetLatLng);
+                }
             }
             return uyoMathematicalBounds.pad(0.4).contains(targetLatLng);
         });
@@ -409,7 +425,6 @@ function bootCommandCenter() {
         dropdownMenu.style.display = 'block';
     };
 
-    // Close dropdown if clicking outside
     document.addEventListener('click', (e) => {
         if (searchContainer && !searchContainer.contains(e.target) && dropdownMenu) {
             dropdownMenu.style.display = 'none';
@@ -425,14 +440,12 @@ function bootCommandCenter() {
         });
     }
 
-    // 🚨 CRITICAL FIX: The Zombie WSS Line Killer
     window.clearUnassignedPins = function() { 
         unassignedPinsLayer.clearLayers(); 
         routeLayerGroup.clearLayers(); 
         dynamicDeliveries = []; 
         window.activeDeployments = {}; 
         
-        // Clear Live Markers
         if (typeof liveMarkers !== 'undefined') {
             for (let id in liveMarkers) {
                 if (map.hasLayer(liveMarkers[id])) map.removeLayer(liveMarkers[id]);
@@ -440,7 +453,6 @@ function bootCommandCenter() {
             liveMarkers = {};
         }
 
-        // Reset WebSocket
         if (typeof liveFleetSocket !== 'undefined' && liveFleetSocket) {
             liveFleetSocket.close();
             liveFleetSocket = null;
@@ -685,7 +697,6 @@ function bootCommandCenter() {
         updateBIMetrics(window.currentMissionMins, window.currentBaselineMins);
     }
 
-    // --- 9. BI ENGINES (Synchronized Backend Math) ---
     let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
 
     async function fetchLifetimeMetrics() {
@@ -773,7 +784,6 @@ function bootCommandCenter() {
 
     fetchLifetimeMetrics();
 
-    // --- 10. BACKEND MISSION DEPLOYMENT (ENTERPRISE SAAS) ---
     window.deployMission = async function(vehicleId, gmapsUrl) {
         
         const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
@@ -848,7 +858,6 @@ function bootCommandCenter() {
         }
     };
 
-    // --- 11. LIVE OPERATIONS (WEBSOCKETS) ---
     let liveFleetSocket = null;
     let liveMarkers = {}; 
 
@@ -949,7 +958,6 @@ function bootCommandCenter() {
         liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
     }
 
-    // --- 12. TIERED REVENUE ENGINE (PAYSTACK) ---
     window.initiateSubscriptionRenewal = async function() {
         const planChoice = prompt(
             "💳 SELECT YOUR PLAN:\n\n" +
@@ -1006,7 +1014,6 @@ function bootCommandCenter() {
         handler.openIframe();
     };
 
-    // --- 13. DYNAMIC REROUTING (TRAFFIC AWARENESS) ---
     window.triggerTrafficRecalculate = async function(vehicleId) {
         const activeCoords = window.activeDeployments[vehicleId];
         if (!activeCoords) {
