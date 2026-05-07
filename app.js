@@ -7,7 +7,8 @@
 // v2.0.1: Geofence tuning - Increased boundary padding to 40% and enforced L.latLng type safety.
 // v2.0.2: Local-First Search - Intercepted queries with Foursquare POI layer before hitting Google APIs.
 // v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError and refined locationRestriction.
-// v2.0.4: Federated Consensus Engine - Parallel fetching (Local DB + Nominatim OSM + Google Places) with Dispatcher Disambiguation Dropdown to prevent API hallucination lawsuits.
+// v2.0.4: Federated Consensus Engine - Parallel fetching (Local+OSM+Google) with Disambiguation UI.
+// v2.0.5: Forced Vercel Sync & DOM Safety - Purged invisible chars and wrapped search UI in DOM readiness checks.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -50,7 +51,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0.4 LOADED - Federated Consensus Engine Active");
+    console.log("🚀 Uyo Logistics Engine v2.0.5 LOADED - Federated Consensus Engine Active");
 
     // --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
     const uyoCenter = [5.0377, 7.9128];
@@ -241,22 +242,33 @@ function bootCommandCenter() {
 
     // --- 7. FEDERATED CONSENSUS ENGINE (LOCAL + NOMINATIM + GOOGLE) ---
     const searchInput = document.getElementById('custom-search');
-    const searchContainer = searchInput.parentElement;
-    searchContainer.style.position = 'relative';
-    
-    // Create the Dropdown UI dynamically
-    const dropdownMenu = document.createElement('div');
-    dropdownMenu.id = 'search-dropdown';
-    dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:1000; border-radius:0 0 8px 8px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.5); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
-    searchContainer.appendChild(dropdownMenu);
+    let searchContainer = null;
+    let dropdownMenu = null;
+
+    if (searchInput) {
+        searchContainer = searchInput.parentElement;
+        searchContainer.style.position = 'relative';
+        
+        // Create the Dropdown UI dynamically safely
+        dropdownMenu = document.createElement('div');
+        dropdownMenu.id = 'search-dropdown';
+        dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:1000; border-radius:0 0 8px 8px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.5); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
+        searchContainer.appendChild(dropdownMenu);
+    }
 
     window.executeSearch = async function() {
+        if (!searchInput || !searchContainer || !dropdownMenu) return;
+        
         const query = searchInput.value.trim();
         if (!query) return;
 
         const btn = searchContainer.querySelector('button');
-        const originalBtnHtml = btn.innerHTML;
-        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
+        let originalBtnHtml = "Search";
+        if (btn) {
+            originalBtnHtml = btn.innerHTML;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
+        }
+        
         dropdownMenu.innerHTML = ''; 
         dropdownMenu.style.display = 'none';
 
@@ -318,7 +330,7 @@ function bootCommandCenter() {
         );
 
         await Promise.allSettled(searchPromises);
-        btn.innerHTML = originalBtnHtml;
+        if (btn) btn.innerHTML = originalBtnHtml;
 
         // --- FILTER & RENDER DISAMBIGUATION MENU ---
         combinedResults = combinedResults.filter(res => {
@@ -388,17 +400,19 @@ function bootCommandCenter() {
 
     // Close dropdown if clicking outside
     document.addEventListener('click', (e) => {
-        if (!searchContainer.contains(e.target)) {
+        if (searchContainer && !searchContainer.contains(e.target) && dropdownMenu) {
             dropdownMenu.style.display = 'none';
         }
     });
 
-    searchInput.addEventListener("keypress", function(event) { 
-        if (event.key === "Enter") { 
-            event.preventDefault(); 
-            window.executeSearch(); 
-        } 
-    });
+    if (searchInput) {
+        searchInput.addEventListener("keypress", function(event) { 
+            if (event.key === "Enter") { 
+                event.preventDefault(); 
+                window.executeSearch(); 
+            } 
+        });
+    }
 
     // 🚨 CRITICAL FIX: The Zombie WSS Line Killer
     window.clearUnassignedPins = function() { 
