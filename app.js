@@ -247,7 +247,7 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. NATIVE SEARCH BAR ENGINE (GOOGLE GEOCODING API) ---
+    // --- 7. NATIVE SEARCH BAR ENGINE (GOOGLE PLACES API - TEXT SEARCH) ---
     window.executeSearch = async function() {
         const query = document.getElementById('custom-search').value.trim();
         if (!query) return;
@@ -256,28 +256,48 @@ function bootCommandCenter() {
         const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
         
         try {
-            // Force Google to prioritize Uyo using our survey-grade bounding box
-            // Format: bounds=southwest.lat,southwest.lng|northeast.lat,northeast.lng
-            const bounds = "4.9000,7.8000|5.1500,8.1000";
-            
-            // Append Akwa Ibom to assist the fuzzy search
+            // Append context for better fuzzy matching
             const searchString = query.toLowerCase().includes('uyo') ? query : `${query}, Uyo, Akwa Ibom`;
 
-            const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchString)}&bounds=${bounds}&key=${GOOGLE_API_KEY}`);
+            // Define the survey-grade bounding box for Uyo (Places API format)
+            const locationBias = {
+                rectangle: {
+                    low: { latitude: 4.9000, longitude: 7.8000 },  // SouthWest limits
+                    high: { latitude: 5.1500, longitude: 8.1000 }  // NorthEast limits
+                }
+            };
+
+            const payload = {
+                textQuery: searchString,
+                locationBias: locationBias
+            };
+
+            // Call the NEW Places API (Text Search)
+            const res = await fetch(`https://places.googleapis.com/v1/places:searchText`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Goog-Api-Key': GOOGLE_API_KEY,
+                    // FieldMask ensures we only request (and pay for) the exact data we need
+                    'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' 
+                },
+                body: JSON.stringify(payload)
+            });
+
             const data = await res.json();
             
-            // 🚨 CRITICAL FIX: Expose Google's internal error codes
-            if (data.status !== "OK" || data.results.length === 0) { 
-                console.error("🔍 Google API Response:", data);
-                const errorReason = data.error_message ? `\n\nGoogle says: ${data.error_message}` : "";
-                alert(`⚠️ Search Failed!\nStatus: ${data.status}${errorReason}`); 
+            // 🚨 CRITICAL FIX: Expose Google's internal error codes (Diagnostic Engine)
+            if (!res.ok || !data.places || data.places.length === 0) { 
+                console.error("🔍 Google Places API Response:", data);
+                const errorReason = data.error ? `\n\nGoogle says: ${data.error.message}` : "";
+                alert(`⚠️ Search Failed or No Results Found!${errorReason}`); 
                 return; 
             }
 
-            // Extract Google's highly precise coordinates
-            const result = data.results[0];
-            const searchLat = parseFloat(result.geometry.location.lat.toFixed(6)); 
-            const searchLng = parseFloat(result.geometry.location.lng.toFixed(6));
+            // Extract the top result's precise coordinates
+            const bestResult = data.places[0];
+            const searchLat = parseFloat(bestResult.location.latitude.toFixed(6)); 
+            const searchLng = parseFloat(bestResult.location.longitude.toFixed(6));
 
             // 🚨 CRITICAL FIX: Titanium Geofencing for Search
             let isInside = false;
@@ -288,20 +308,22 @@ function bootCommandCenter() {
             }
 
             if (!isInside) { 
-                alert(`⚠️ Google found "${result.formatted_address}", but it is outside the Uyo service boundary.`); 
+                alert(`⚠️ Google found "${bestResult.formattedAddress}", but it is outside the Uyo service boundary.`); 
                 return; 
             }
 
             const dropId = "Search_" + Math.floor(Math.random() * 10000);
             dynamicDeliveries.push({ id: dropId, lat: searchLat, lon: searchLng, weight: 1 });
 
-            // Truncate the formatted address for the popup so it fits nicely
-            const shortAddress = result.formatted_address.split(',')[0] + ", " + (result.formatted_address.split(',')[1] || "Uyo");
+            // Create a clean display name using the new Places data structure
+            const placeName = bestResult.displayName ? bestResult.displayName.text : query;
+            const shortAddress = bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo";
 
             const popupContent = `
                 <div style="text-align: center;">
                     <b style="color: #1f2937;">Dispatched to:</b><br>
-                    <span style="font-size: 11px;">${shortAddress}</span><br>
+                    <span style="font-size: 11px; font-weight: bold;">${placeName}</span><br>
+                    <span style="font-size: 10px; color: #4b5563;">${shortAddress}</span><br>
                     <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                         <i class="fa-solid fa-trash"></i> Remove Drop
                     </button>
@@ -318,7 +340,7 @@ function bootCommandCenter() {
             document.getElementById('custom-search').value = ""; 
 
         } catch (err) { 
-            console.error("Google Geocoding failed", err); 
+            console.error("Google Places failed", err); 
             alert("Search engine temporarily disconnected."); 
         }
     };
