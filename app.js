@@ -40,11 +40,10 @@ if (!activeLicenseKey) {
 function bootCommandCenter() {
     
     // --- DYNAMIC INFRASTRUCTURE CONFIG (CLOUD-READY) ---
-    // Swapped to Production Domains (Vercel Reverse Proxy enabled)
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0 LOADED - Production Domains Active");
+    console.log("🚀 Uyo Logistics Engine v2.0.3 LOADED - Federated Search Active");
 
     // --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
     const uyoCenter = [5.0377, 7.9128];
@@ -55,10 +54,6 @@ function bootCommandCenter() {
         L.latLng(5.1500, 8.1000)  // NorthEast limits
     );
 
-    /** * SURVEY-GRADE UPSCALING: 
-     * maxZoom is the UI limit (how far the user can scroll).
-     * maxNativeZoom is the data limit (the last available physical image).
-     */
     const darkMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
         attribution: '© OpenStreetMap contributors, © CARTO',
         subdomains: 'abcd',
@@ -97,7 +92,6 @@ function bootCommandCenter() {
     let dynamicDeliveries = [];
     let unassignedPinsLayer = L.layerGroup().addTo(map);
 
-    // Store calculated OSRM coordinates for backend deployment
     window.activeDeployments = {}; 
 
     const baseMaps = { 
@@ -126,13 +120,9 @@ function bootCommandCenter() {
             const currentKey = localStorage.getItem('uyo_license_key');
             const response = await fetch(`${API_BASE_URL}/api/layers${endpoint}`, {
                 method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-license-key': currentKey
-                }
+                headers: { 'Content-Type': 'application/json', 'x-license-key': currentKey }
             });
             
-            // 🚨 CRITICAL FIX: The 401 Session Interceptor
             if (response.status === 401) {
                 console.error(`🔒 Session Expired: Rejected by ${endpoint}`);
                 localStorage.removeItem('uyo_license_key');
@@ -193,12 +183,10 @@ function bootCommandCenter() {
 
     depotMarker.on('dragend', function() {
         const position = depotMarker.getLatLng();
-        // TRUNCATE DEPOT COORDS
         depotLocation.lat = parseFloat(position.lat.toFixed(6));
         depotLocation.lon = parseFloat(position.lng.toFixed(6));
     });
 
-    // --- INDIVIDUAL PIN DELETION ---
     window.removePin = function(dropId) {
         dynamicDeliveries = dynamicDeliveries.filter(d => d.id !== dropId);
         unassignedPinsLayer.eachLayer(function(layer) {
@@ -210,12 +198,10 @@ function bootCommandCenter() {
     };
 
     map.on('click', function(e) {
-        // 🚨 CRITICAL FIX: Titanium Geofencing (Fail-Closed)
         let isInside = false;
         if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
             isInside = boundaryLayer.getLayers()[0].getBounds().contains(e.latlng);
         } else {
-            // Fallback to strict mathematical box if DB layer is offline
             isInside = uyoMathematicalBounds.contains(e.latlng);
         }
 
@@ -224,7 +210,6 @@ function bootCommandCenter() {
             return; 
         }
         
-        // 🚨 CRITICAL FIX: Truncate float mathematically to prevent API float-overflows
         const cleanLat = parseFloat(e.latlng.lat.toFixed(6));
         const cleanLng = parseFloat(e.latlng.lng.toFixed(6));
         
@@ -247,13 +232,13 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. NATIVE SEARCH BAR ENGINE (LOCAL-FIRST + GOOGLE FALLBACK) ---
+    // --- 7. FEDERATED SEARCH ENGINE (LOCAL DB + GOOGLE PLACES) ---
     window.executeSearch = async function() {
         const query = document.getElementById('custom-search').value.trim();
         if (!query) return;
 
-        // HELPER: Keeps code DRY by standardizing pin deployment
-        const dropDispatchedPin = (lat, lng, name, address) => {
+        // HELPER: Deploys the pin if it passes the boundary test. Returns boolean.
+        const dropDispatchedPin = (lat, lng, name, address, silent = false) => {
             const targetLatLng = L.latLng(lat, lng);
             let isInside = false;
 
@@ -264,7 +249,7 @@ function bootCommandCenter() {
             }
 
             if (!isInside) { 
-                alert(`⚠️ Location "${name}" (${address}) is too far outside the Uyo service boundary.`); 
+                if (!silent) alert(`⚠️ Location "${name}" (${address}) is too far outside the Uyo service boundary.`); 
                 return false; 
             }
 
@@ -293,46 +278,41 @@ function bootCommandCenter() {
             return true;
         };
 
-        // --- PHASE 1: LOCAL DATABASE INTERCEPTOR ---
-        // Bypasses Google if the Landmark exists in your verified POI DB
-        let localMatch = false;
+        // --- STEP 1: SCAN LOCAL DATABASE SAFELY ---
+        let localMatch = null;
         const lowerQuery = query.toLowerCase();
         
         poiLayer.eachLayer(layer => {
             if (localMatch) return; 
-            const props = layer.feature.properties;
-            // Catch variations of name fields common in GIS datasets
-            const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
             
-            if (poiName && poiName.includes(lowerQuery)) {
-                const latlng = layer.getLatLng();
-                console.log("✅ Match found in Local Database, bypassing Google.");
-                localMatch = dropDispatchedPin(latlng.lat, latlng.lng, props.name || query, "Local Verified POI");
+            // 🚨 CRITICAL BUG FIX: Ensure the layer actually has GeoJSON properties to prevent TypeError crashes
+            if (layer.feature && layer.feature.properties) {
+                const props = layer.feature.properties;
+                const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
+                
+                if (poiName && poiName.includes(lowerQuery)) {
+                    localMatch = {
+                        lat: layer.getLatLng().lat,
+                        lng: layer.getLatLng().lng,
+                        name: props.name || query,
+                        address: "Uyo Local Database (2023)"
+                    };
+                }
             }
         });
 
-        if (localMatch) return; // Exit early if we successfully deployed from local DB
-
-        // --- PHASE 2: GOOGLE PLACES API FALLBACK ---
+        // --- STEP 2: FETCH FRESH GOOGLE PLACES DATA ---
         // 🚨 CRITICAL: Paste your restricted Google API Key here
         const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
-        
+        let googleMatch = null;
+
         try {
             const searchString = query.toLowerCase().includes('uyo') ? query : `${query}, Uyo, Akwa Ibom`;
-
-            // 🚨 CRITICAL FIX: Enforced Location Restriction
-            // We tightened the bounding box to specifically filter out false-positives in rural northern LGAs like Oko Ita
             const locationRestriction = {
-                rectangle: {
-                    low: { latitude: 4.9500, longitude: 7.8500 },  // Tighter SouthWest
-                    high: { latitude: 5.1000, longitude: 8.0500 }  // Tighter NorthEast
-                }
+                rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } }
             };
 
-            const payload = {
-                textQuery: searchString,
-                locationRestriction: locationRestriction // Forces Google to discard corrupted points outside this box
-            };
+            const payload = { textQuery: searchString, locationRestriction: locationRestriction };
 
             const res = await fetch(`https://places.googleapis.com/v1/places:searchText`, {
                 method: 'POST',
@@ -346,25 +326,42 @@ function bootCommandCenter() {
 
             const data = await res.json();
             
-            if (!res.ok || !data.places || data.places.length === 0) { 
-                console.error("🔍 Google Places API Response:", data);
-                const errorReason = data.error ? `\n\nGoogle says: ${data.error.message}` : "";
-                alert(`⚠️ Search Failed or No Results Found!${errorReason}`); 
-                return; 
+            if (res.ok && data.places && data.places.length > 0) { 
+                const bestResult = data.places[0];
+                googleMatch = {
+                    lat: parseFloat(bestResult.location.latitude.toFixed(6)),
+                    lng: parseFloat(bestResult.location.longitude.toFixed(6)),
+                    name: bestResult.displayName ? bestResult.displayName.text : query,
+                    address: bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo"
+                };
             }
-
-            const bestResult = data.places[0];
-            const searchLat = parseFloat(bestResult.location.latitude.toFixed(6)); 
-            const searchLng = parseFloat(bestResult.location.longitude.toFixed(6));
-            const placeName = bestResult.displayName ? bestResult.displayName.text : query;
-            const shortAddress = bestResult.formattedAddress ? bestResult.formattedAddress.split(',')[0] : "Uyo";
-
-            dropDispatchedPin(searchLat, searchLng, placeName, shortAddress);
-
         } catch (err) { 
-            console.error("Google Places failed", err); 
-            alert("Search engine temporarily disconnected."); 
+            console.warn("Google Places query failed or timed out.", err); 
         }
+
+        // --- STEP 3: THE MERGE LOGIC (DECISION ENGINE) ---
+        // Attempt 1: Try Google first (fresher data) but quietly test it against our strict geofence
+        if (googleMatch) {
+            const isGoogleValid = dropDispatchedPin(googleMatch.lat, googleMatch.lng, googleMatch.name, googleMatch.address, true);
+            if (isGoogleValid) {
+                console.log("✅ Using fresh Google Places data.");
+                return; // Success! Exit early.
+            } else {
+                console.warn("⚠️ Google found it, but it was out of bounds. Falling back to Local DB.");
+            }
+        }
+
+        // Attempt 2: If Google failed completely OR returned rural coordinates, use the Local Safety Net
+        if (localMatch) {
+            const isLocalValid = dropDispatchedPin(localMatch.lat, localMatch.lng, localMatch.name, localMatch.address, false);
+            if (isLocalValid) {
+                console.log("✅ Using Local Foursquare 2023 Fallback.");
+                return; // Success! Exit early.
+            }
+        }
+
+        // Attempt 3: Total Failure
+        alert(`⚠️ Search Failed! "${query}" could not be found within the Uyo service boundary via Google or Local Databases.`);
     };
 
     document.getElementById("custom-search").addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); window.executeSearch(); } });
@@ -425,7 +422,6 @@ function bootCommandCenter() {
         };
         let activeFleet = (vehicleChoice === 'all') ? [...fleetProfiles.bike, ...fleetProfiles.van] : fleetProfiles[vehicleChoice];
         
-        // 🚨 CRITICAL FIX: Increased to 60-seconds to allow for Serverless Cold Starts
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000); 
         
@@ -443,9 +439,8 @@ function bootCommandCenter() {
                 signal: controller.signal
             });
             
-            clearTimeout(timeoutId); // Network succeeded, cancel the timeout killer
+            clearTimeout(timeoutId); 
             
-            // 🚨 CRITICAL FIX: Bulletproof error trapping
             if (!response.ok) {
                 let errorMsg = "Backend Routing Error";
                 try {
@@ -471,7 +466,6 @@ function bootCommandCenter() {
             
             const data = await response.json();
             
-            // Store globally for the Client-Side CSV Exporter
             window.latestOptimizationResult = data;
             
             routeLayerGroup.clearLayers(); 
@@ -487,7 +481,6 @@ function bootCommandCenter() {
             window.currentMissionMins = backendOptimizedMins;
             window.currentBaselineMins = data.empirical_baseline || 0;
             
-            // 🚨 CRITICAL FIX: Replaced Server-Side Route Pathing with Dynamic Client Blob Loading
             if (data.routes || data.report_url) {
                 const reportContainer = document.getElementById("report-container");
                 const downloadBtn = document.getElementById("download-report-btn");
@@ -497,7 +490,6 @@ function bootCommandCenter() {
                     const sidebar = document.querySelector('.col-span-3');
                     if (sidebar) sidebar.scrollTop = 0;
                     
-                    // Overwrite default onclick to use our new Survey Manifest exporter
                     downloadBtn.onclick = function() {
                         const currentOpIntel = {
                             fuel_saved: document.getElementById("stat-fuel") ? document.getElementById("stat-fuel").innerText : "₦0",
@@ -521,7 +513,6 @@ function bootCommandCenter() {
             }
             console.error("Routing Error:", error);
         } finally { 
-            // 🚨 CRITICAL FIX: Guaranteed UI reset
             if (btn) {
                 btn.innerHTML = "Optimize Routes"; 
                 btn.disabled = false; 
@@ -644,7 +635,6 @@ function bootCommandCenter() {
                 headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
             });
             
-            // 🚨 CRITICAL FIX: Catch metric 401s
             if (response.status === 401) {
                 localStorage.removeItem('uyo_license_key');
                 window.location.href = "login.html";
@@ -664,12 +654,10 @@ function bootCommandCenter() {
     function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
         let manualTimeEst = parseFloat(unoptimizedMins) || 0;
         
-        // 🚨 CRITICAL FIX: The "Sanity Clamp" for backend data anomalies
         if (manualTimeEst === 0 || manualTimeEst > (optimizedMins * 2.0)) {
             manualTimeEst = optimizedMins * 1.35;
         }
         
-        // Ensure the baseline is never somehow faster than the optimized machine route
         if (manualTimeEst < optimizedMins && optimizedMins > 0) {
             manualTimeEst = optimizedMins * 1.05; 
         }
@@ -739,7 +727,6 @@ function bootCommandCenter() {
         );
         const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
 
-        // 🚨 THE FIX: Ask for confirmations FIRST while the dashboard is still the active, front-facing tab
         const userChoice = confirm(
             `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
             `This will initiate live tracking and record the mission.\n\n` +
@@ -747,12 +734,11 @@ function bootCommandCenter() {
         );
 
         if (!userChoice) {
-            return; // Exit immediately without opening any tabs
+            return; 
         }
 
         const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
 
-        // 🚨 NOW open the blank tab (Browser will allow this because the user just interacted with the confirm box)
         const newTab = window.open('about:blank', '_blank'); 
 
         try {
@@ -789,16 +775,15 @@ function bootCommandCenter() {
                     }
                 });
 
-                // Redirect the pre-opened tab to the correct destination
                 newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
 
             } else {
-                newTab.close(); // Kill the tab on server error
+                newTab.close(); 
                 const errData = await response.json().catch(() => ({}));
                 throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
             }
         } catch (err) {
-            newTab.close(); // Kill the tab on catch error
+            newTab.close(); 
             console.error("Deployment Error:", err);
             alert(`❌ Deployment Failed!\n\n${err.message}`);
         }
@@ -835,7 +820,6 @@ function bootCommandCenter() {
         liveFleetSocket.onmessage = async function(event) {
             const data = JSON.parse(event.data);
             
-            // 🚨 CRITICAL FIX: Trap status-only payloads to prevent Leaflet LatLng crashes
             if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
                 if (data.status === 'completed') {
                     console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
@@ -844,7 +828,7 @@ function bootCommandCenter() {
                         delete liveMarkers[data.vehicle_id];
                     }
                 }
-                return; // Exit WSS logic safely without crashing Leaflet
+                return; 
             }
 
             if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
@@ -982,7 +966,6 @@ function bootCommandCenter() {
 
             console.log(`🚦 Re-optimizing remaining drops for ${vehicleId} using time-aware logic...`);
             
-            // We assume the current unassigned deliveries are the remaining drops.
             const remainingDeliveries = dynamicDeliveries.length > 0 ? dynamicDeliveries : [];
             
             if (remainingDeliveries.length === 0) {
@@ -990,7 +973,6 @@ function bootCommandCenter() {
                  return;
             }
 
-            // Call the Solver Again. It will automatically apply the Uyo hour penalty on the backend.
             const solveRes = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, { 
                 method: 'POST', 
                 headers: { 
@@ -1013,10 +995,8 @@ function bootCommandCenter() {
                 setTimeout(() => document.body.style.borderTop = "none", 5000);
             }
 
-            // Simplified extraction for the dynamic re-route Google Maps URL
-            const newMapUrl = "https://www.google.com/maps/dir/?api=1"; // Prepared for dynamic waypoint extraction
+            const newMapUrl = "https://www.google.com/maps/dir/?api=1"; 
 
-            // Push the new route to the Driver's phone via WebSocket
             const pushRes = await fetch(`${API_BASE_URL}/api/vrp/push-reroute`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1046,8 +1026,6 @@ function bootCommandCenter() {
 // --- 14. CLIENT-SIDE CSV MANIFEST EXPORT (BYPASSES SERVERLESS LIMITS) ---
 // ==============================================================================
 window.downloadSurveyManifest = function(routeData, opIntelData) {
-    // 1. Replicate Exact Original Headers
-    // 🚨 CRITICAL FIX: Added \uFEFF (UTF-8 BOM) so Excel/WPS correctly renders the Naira (₦) symbol
     let csvContent = "\uFEFFVehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
 
     const routesArray = routeData.routes || routeData.optimized_routes || [];
@@ -1091,13 +1069,9 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
         });
     });
 
-    // 2. Replicate the Exact BI Summary Block
     csvContent += ",,,,,,,\n"; 
     csvContent += "--- EXECUTIVE BI SUMMARY ---,,,,,,,\n";
     
-    // 🚨 CRITICAL FIX: Wrapped all metric variables in double quotes ""
-    // This prevents numbers like "2,101" from splitting into multiple columns.
-    // Also removed the hardcoded '%' from Efficiency since it is scraped from the UI.
     csvContent += `Total Orders Dispatched,"${opIntelData.drops || 0} Drops",,,,,,\n`;
     csvContent += `Total Fleet Operation Time,"${opIntelData.total_mins || 0} Mins",,,,,,\n`;
     csvContent += `Estimated Fuel Savings,"${opIntelData.fuel_saved || '₦0'}",,,,,,\n`;
@@ -1108,7 +1082,6 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
     const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
     csvContent += `Optimization Timestamp,"${timestamp}",,,,,,\n`;
 
-    // 3. Create raw Data Blob and Trigger Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
