@@ -9,7 +9,8 @@
 // v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError and refined locationRestriction.
 // v2.0.4: Federated Consensus Engine - Parallel fetching (Local+OSM+Google) with Disambiguation UI.
 // v2.0.5: Forced Vercel Sync & DOM Safety - Purged invisible chars and wrapped search UI in DOM readiness checks.
-// v2.0.6: Indestructible Search UI - Detached search bar from document flow, anchoring it to map top-center to survive DevTools/mobile viewport squishing.
+// v2.0.6: Indestructible Search UI - Detached search bar from document flow (Caused regression).
+// v2.0.7: Mobile UX Overhaul - Restored DOM integrity, moved Layer Control to bottomleft, added mobile auto-collapse.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -52,7 +53,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0.6 LOADED - Federated Consensus Engine Active");
+    console.log("🚀 Uyo Logistics Engine v2.0.7 LOADED - Mobile UX Overhaul Active");
 
     // --- 1. SETTINGS & BASE LAYERS (DEEP ZOOM ENABLED) ---
     const uyoCenter = [5.0377, 7.9128];
@@ -115,7 +116,13 @@ function bootCommandCenter() {
         "Points of Interest": poiLayer,
         "Accessibility": accessibilityLayer
     };
-    L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+    
+    // 🚨 FIX: Move layer control away from the top so it never conflicts with the search bar
+    const isMobile = window.innerWidth < 768;
+    L.control.layers(baseMaps, overlayMaps, { 
+        position: 'bottomleft', 
+        collapsed: isMobile // Auto-collapse on phones, open on desktop
+    }).addTo(map);
 
     // --- 5. DATA LOADING & NATIVE SYMBOLOGY ---
     const layerStyles = {
@@ -249,26 +256,14 @@ function bootCommandCenter() {
     if (searchInput) {
         searchContainer = searchInput.parentElement;
         
-        // 🚨 CRITICAL UI FIX: Detach the search bar from the document flow and float it
-        const mapDiv = document.getElementById('map');
-        if (mapDiv && searchContainer.parentNode !== mapDiv) {
-            mapDiv.appendChild(searchContainer); // Force it inside the map container
-        }
-
-        // Apply indestructible absolute positioning
-        searchContainer.style.position = 'absolute';
-        searchContainer.style.top = '20px'; // Pins it to the top, immune to DevTools
-        searchContainer.style.left = '50%';
-        searchContainer.style.transform = 'translateX(-50%)'; // Perfect horizontal centering
-        searchContainer.style.zIndex = '1000'; // Overrides Leaflet panes
-        searchContainer.style.width = '90%'; // Responsive on mobile
-        searchContainer.style.maxWidth = '450px'; // Maintains shape on desktop
-        searchContainer.style.borderRadius = '8px';
+        // 🚨 FIX: Reverted to natural document flow, simply applied a high z-index
+        searchContainer.style.position = 'relative';
+        searchContainer.style.zIndex = '2000';
         
         // Create the Dropdown UI dynamically safely
         dropdownMenu = document.createElement('div');
         dropdownMenu.id = 'search-dropdown';
-        dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:1000; border-radius:0 0 8px 8px; box-shadow:0 10px 20px rgba(0,0,0,0.6); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
+        dropdownMenu.style.cssText = 'position:absolute; top:100%; left:0; width:100%; background:#1f2937; color:white; z-index:2000; border-radius:0 0 8px 8px; box-shadow:0 10px 20px rgba(0,0,0,0.6); display:none; max-height:250px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif;';
         searchContainer.appendChild(dropdownMenu);
     }
 
