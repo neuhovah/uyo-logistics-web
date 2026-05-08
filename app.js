@@ -13,6 +13,7 @@
 // v2.0.7: Mobile UX Overhaul.
 // v2.0.8: Native Leaflet UI Integration.
 // v2.0.9: Search Engine Stabilization - Removed silent GeoJSON bounding crashes and fixed CSS overflow clipping on dropdowns.
+// v2.1.0: Rapid-Fire Dispatch UX - Auto-clears and auto-focuses search input after pin drop.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -52,7 +53,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.0.9 LOADED - Stabilized Search Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.0 LOADED - Rapid-Fire Dispatch Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -407,7 +408,10 @@ function bootCommandCenter() {
 
                 opt.onclick = () => {
                     dropdownMenu.style.display = 'none';
-                    searchInput.value = item.name;
+                    
+                    // 🚨 RAPID-FIRE UX FIX: Instantly clear the search bar and refocus the cursor
+                    searchInput.value = '';
+                    searchInput.focus();
                     
                     const dropId = "Search_" + Math.floor(Math.random() * 10000);
                     dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: 1 });
