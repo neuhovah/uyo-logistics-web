@@ -14,6 +14,7 @@
 // v2.0.8: Native Leaflet UI Integration.
 // v2.0.9: Search Engine Stabilization - Removed silent GeoJSON bounding crashes and fixed CSS overflow clipping on dropdowns.
 // v2.1.0: Rapid-Fire Dispatch UX - Auto-clears and auto-focuses search input after pin drop.
+// v2.1.1: Billing System Patch - Injected Paystack Inline library into HTML to resolve ReferenceError during subscription renewals.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -53,7 +54,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.0 LOADED - Rapid-Fire Dispatch Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.1 LOADED - Rapid-Fire Dispatch & Billing Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
