@@ -18,6 +18,7 @@
 // v2.1.2: Pricing Model Update - Adjusted Paystack tiers to 3k/25k/70k with corresponding 20/200/600 stop limits.
 // v2.1.3: Paystack Engine Fix - Removed async from inline.js callback to prevent strict validation crash, synced API_BASE_URL.
 // v2.1.4: Academic UI Implementation - Added metric spatial scale and collapsible cartographic legend to the bottom-left map UI.
+// v2.1.5: Survey-Grade Cartography - Added Depot to legend and implemented data-driven multi-tier styling for accessibility isochrones.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -57,7 +58,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.4 LOADED - Updated Pricing Tiers Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.5 LOADED - Survey-Grade UI Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -112,7 +113,11 @@ function bootCommandCenter() {
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-motorcycle" style="color: #10b981; width: 16px; margin-right: 6px;"></i> Bike Route (Agile)</div>
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #ef4444; opacity: 0.5; width: 16px; margin-right: 6px;"></i> Operations Boundary</div>
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-fire" style="color: #ef4444; width: 16px; margin-right: 6px;"></i> Demand Hotspot</div>
-                <div style="display: flex; align-items: center; margin-top: 2px;">
+                
+                <div style="display: flex; align-items: center; margin-top: 6px;">
+                    <div style="width: 12px; height: 12px; border-radius: 50%; border: 3px solid #3b82f6; background: #ffffff; margin-right: 6px; margin-left: 1px; box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);"></div> Central Depot
+                </div>
+                <div style="display: flex; align-items: center; margin-top: 4px;">
                     <div style="width: 10px; height: 10px; border-radius: 50%; border: 2px solid #3b82f6; background: white; margin-right: 8px; margin-left: 2px; box-shadow: 0 0 5px rgba(255,255,255,0.5);"></div> Unassigned Drop
                 </div>
                 <div style="display: flex; align-items: center; margin-top: 4px;">
@@ -177,10 +182,42 @@ function bootCommandCenter() {
         collapsed: isMobile 
     }).addTo(map);
 
+    // --- UPDATED: DATA-DRIVEN STYLING FOR MULTI-TIER ISOCHRONES ---
     const layerStyles = {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
         hotspots: { fillColor: "#ef4444", color: "transparent", fillOpacity: 0.5, interactive: false },
-        accessibility: { fillColor: "#166534", fillOpacity: 0.4, interactive: false }
+        accessibility: (feature) => {
+            let color = "#166534"; // Fallback Dark Green
+            let opacity = 0.4;
+            let weight = 0;
+            
+            // Check properties for a time/cost threshold from the backend
+            const threshold = feature.properties?.time || feature.properties?.cost || feature.properties?.threshold;
+            
+            if (threshold !== undefined) {
+                if (threshold <= 5) {
+                    color = "#14532d"; // Deep Green for core access
+                    opacity = 0.6;
+                    weight = 1;
+                } else if (threshold <= 10) {
+                    color = "#166534"; // Mid Green
+                    opacity = 0.4;
+                    weight = 1;
+                } else {
+                    color = "#22c55e"; // Light Green for outer reach
+                    opacity = 0.2;
+                    weight = 1;
+                }
+            }
+            
+            return {
+                fillColor: color,
+                color: color,
+                weight: weight,
+                fillOpacity: opacity,
+                interactive: false
+            };
+        }
     };
 
     async function fetchSpatialLayer(endpoint, layerGroup, styleConfig, targetPane = 'overlayPane') {
@@ -204,7 +241,7 @@ function bootCommandCenter() {
             
             L.geoJSON(data, {
                 pane: targetPane, 
-                style: styleConfig.style || {},
+                style: styleConfig.style || styleConfig, 
                 pointToLayer: styleConfig.pointToLayer || null,
                 onEachFeature: (feature, layer) => {
                     if (styleConfig.interactive !== false) {
@@ -222,7 +259,8 @@ function bootCommandCenter() {
     function loadAllDatabaseLayers() {
         fetchSpatialLayer('/hotspots', hotspotLayer, { style: () => layerStyles.hotspots }, 'hotspotPane');
         fetchSpatialLayer('/boundaries', boundaryLayer, { style: layerStyles.boundaries });
-        fetchSpatialLayer('/accessibility', accessibilityLayer, { style: () => layerStyles.accessibility }, 'accessibilityPane');
+        // Using the new data-driven styling function
+        fetchSpatialLayer('/accessibility', accessibilityLayer, layerStyles.accessibility, 'accessibilityPane');
 
         fetchSpatialLayer('/pois', poiLayer, { 
             pointToLayer: (feature, latlng) => {
