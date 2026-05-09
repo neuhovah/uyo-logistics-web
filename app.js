@@ -17,6 +17,7 @@
 // v2.1.1: Billing System Patch - Injected Paystack Inline library into HTML to resolve ReferenceError during subscription renewals.
 // v2.1.2: Pricing Model Update - Adjusted Paystack tiers to 3k/25k/70k with corresponding 20/200/600 stop limits.
 // v2.1.3: Paystack Engine Fix - Removed async from inline.js callback to prevent strict validation crash, synced API_BASE_URL.
+// v2.1.4: Academic UI Implementation - Added metric spatial scale and collapsible cartographic legend to the bottom-left map UI.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -56,7 +57,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.3 LOADED - Updated Pricing Tiers Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.4 LOADED - Updated Pricing Tiers Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -85,6 +86,61 @@ function bootCommandCenter() {
 
     const map = L.map('map', { center: uyoCenter, zoom: 13, maxZoom: 22, layers: [darkMap], zoomControl: false });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // --- ACADEMIC REQUIREMENT: SPATIAL SCALE ---
+    L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
+
+    // --- ACADEMIC REQUIREMENT: COLLAPSIBLE MAP LEGEND ---
+    const mapLegend = L.control({ position: 'bottomleft' });
+    mapLegend.onAdd = function () {
+        const div = L.DomUtil.create('div', 'info legend');
+        
+        // Base container styling
+        div.style.cssText = "background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; border: 1px solid #374151; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); color: #e5e7eb; font-family: ui-sans-serif, system-ui, sans-serif; backdrop-filter: blur(4px); overflow: hidden; transition: all 0.3s ease; margin-bottom: 5px;";
+
+        // Inject the interactive HTML structure
+        div.innerHTML = `
+            <div id="legend-header" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none;">
+                <span style="font-weight: 900; color: #60a5fa; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px;">
+                    <i class="fa-solid fa-layer-group" style="margin-right: 4px;"></i> Spatial Legend
+                </span>
+                <i id="legend-chevron" class="fa-solid fa-chevron-up" style="font-size: 10px; margin-left: 14px; transition: transform 0.3s ease;"></i>
+            </div>
+            
+            <div id="legend-content" style="padding: 0 12px 12px 12px; font-size: 11px; line-height: 1.8; display: none;">
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-truck" style="color: #3b82f6; width: 16px; margin-right: 6px;"></i> Van Route (Heavy)</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-motorcycle" style="color: #10b981; width: 16px; margin-right: 6px;"></i> Bike Route (Agile)</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #ef4444; opacity: 0.5; width: 16px; margin-right: 6px;"></i> Operations Boundary</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-fire" style="color: #ef4444; width: 16px; margin-right: 6px;"></i> Demand Hotspot</div>
+                <div style="display: flex; align-items: center; margin-top: 2px;">
+                    <div style="width: 10px; height: 10px; border-radius: 50%; border: 2px solid #3b82f6; background: white; margin-right: 8px; margin-left: 2px; box-shadow: 0 0 5px rgba(255,255,255,0.5);"></div> Unassigned Drop
+                </div>
+                <div style="display: flex; align-items: center; margin-top: 4px;">
+                    <div style="width: 10px; height: 10px; border-radius: 50%; border: 2px solid white; background: #ef4444; margin-right: 8px; margin-left: 2px; box-shadow: 0 0 8px #ef4444;"></div> Live Fleet Ping
+                </div>
+            </div>
+        `;
+
+        // Prevent click events from passing through to the map
+        L.DomEvent.disableClickPropagation(div);
+
+        // Add the toggle logic
+        setTimeout(() => {
+            const header = document.getElementById('legend-header');
+            const content = document.getElementById('legend-content');
+            const chevron = document.getElementById('legend-chevron');
+            let isOpen = false;
+
+            header.onclick = function() {
+                isOpen = !isOpen;
+                content.style.display = isOpen ? 'block' : 'none';
+                chevron.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+            };
+        }, 100);
+
+        return div;
+    };
+    mapLegend.addTo(map);
 
     map.createPane('accessibilityPane'); map.getPane('accessibilityPane').style.zIndex = 300;
     map.createPane('hotspotPane');       map.getPane('hotspotPane').style.zIndex = 310;
