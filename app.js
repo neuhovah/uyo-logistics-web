@@ -15,6 +15,7 @@
 // v2.0.9: Search Engine Stabilization - Removed silent GeoJSON bounding crashes and fixed CSS overflow clipping on dropdowns.
 // v2.1.0: Rapid-Fire Dispatch UX - Auto-clears and auto-focuses search input after pin drop.
 // v2.1.1: Billing System Patch - Injected Paystack Inline library into HTML to resolve ReferenceError during subscription renewals.
+// v2.1.2: Pricing Model Update - Adjusted Paystack tiers to 3k/25k/70k with corresponding 20/200/600 stop limits.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -54,7 +55,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.1 LOADED - Rapid-Fire Dispatch & Billing Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.2 LOADED - Updated Pricing Tiers Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -251,7 +252,6 @@ function bootCommandCenter() {
         
         dropdownMenu = document.createElement('div');
         dropdownMenu.id = 'search-dropdown';
-        // 🚨 FIX: Aggressive CSS to ensure the dropdown breaks out of any hidden containers
         dropdownMenu.style.cssText = 'position:absolute; top:calc(100% + 5px); left:0; width:100%; background:#1f2937; color:white; z-index:9999; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.8); display:none; max-height:300px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif; pointer-events:auto;';
         searchContainer.appendChild(dropdownMenu);
 
@@ -270,7 +270,6 @@ function bootCommandCenter() {
                 searchContainer.style.margin = '10px';
                 searchContainer.style.zIndex = 'auto'; 
                 
-                // 🚨 FIX: Prevent Tailwind from clipping the dropdown menu
                 searchContainer.classList.remove('overflow-hidden');
                 searchContainer.style.overflow = 'visible';
                 
@@ -361,7 +360,6 @@ function bootCommandCenter() {
 
             await Promise.allSettled(searchPromises);
 
-            // 🚨 FIX: Removed dynamic layer math that causes silent crashes. Used strict math.
             const safeBounds = uyoMathematicalBounds.pad(0.5); 
             
             let uniqueResults = [];
@@ -377,7 +375,6 @@ function bootCommandCenter() {
                 }
             });
 
-            // 🚨 FIX: Replaced Javascript Alert with an in-UI message
             if (uniqueResults.length === 0) {
                 dropdownMenu.innerHTML = `
                     <div style="padding:15px; text-align:center; color:#f87171; font-size:12px;">
@@ -410,7 +407,6 @@ function bootCommandCenter() {
                 opt.onclick = () => {
                     dropdownMenu.style.display = 'none';
                     
-                    // 🚨 RAPID-FIRE UX FIX: Instantly clear the search bar and refocus the cursor
                     searchInput.value = '';
                     searchInput.focus();
                     
@@ -986,20 +982,20 @@ function bootCommandCenter() {
     window.initiateSubscriptionRenewal = async function() {
         const planChoice = prompt(
             "💳 SELECT YOUR PLAN:\n\n" +
-            "1. Daily Pass - ₦3,000\n" +
-            "2. Bi-Weekly Pro - ₦25,000\n" +
-            "3. Monthly Enterprise - ₦50,000\n\n" +
+            "1. Daily Pass (20 Stops) - ₦3,000\n" +
+            "2. Bi-Weekly Pro (200 Stops) - ₦25,000\n" +
+            "3. Monthly Enterprise (600 Stops) - ₦70,000\n\n" +
             "Enter 1, 2, or 3:"
         );
 
-        let amountKobo, daysToAdd;
+        let amountKobo, daysToAdd, stopLimit;
 
         if (planChoice === "1") {
-            amountKobo = 300000; daysToAdd = 1;
+            amountKobo = 300000; daysToAdd = 1; stopLimit = 20;
         } else if (planChoice === "2") {
-            amountKobo = 2500000; daysToAdd = 14;
+            amountKobo = 2500000; daysToAdd = 14; stopLimit = 200;
         } else if (planChoice === "3") {
-            amountKobo = 5000000; daysToAdd = 30;
+            amountKobo = 7000000; daysToAdd = 30; stopLimit = 600;
         } else {
             alert("Invalid selection. Operation cancelled.");
             return;
@@ -1021,12 +1017,13 @@ function bootCommandCenter() {
                     body: JSON.stringify({ 
                         reference: response.reference, 
                         license_key: localStorage.getItem('uyo_license_key'),
-                        days_to_add: daysToAdd 
+                        days_to_add: daysToAdd,
+                        stop_limit: stopLimit
                     })
                 });
                 
                 if (updateRes.ok) {
-                    alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s).`);
+                    alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s) with a ${stopLimit}-stop limit.`);
                     location.reload(); 
                 } else {
                     alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
