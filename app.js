@@ -16,6 +16,7 @@
 // v2.1.0: Rapid-Fire Dispatch UX - Auto-clears and auto-focuses search input after pin drop.
 // v2.1.1: Billing System Patch - Injected Paystack Inline library into HTML to resolve ReferenceError during subscription renewals.
 // v2.1.2: Pricing Model Update - Adjusted Paystack tiers to 3k/25k/70k with corresponding 20/200/600 stop limits.
+// v2.1.3: Paystack Engine Fix - Removed async from inline.js callback to prevent strict validation crash, synced API_BASE_URL.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -29,7 +30,7 @@ if (!activeLicenseKey) {
     
     bootCommandCenter(); 
 
-    fetch("/api/vrp/history", {
+    fetch("https://api.uyologistics.com/api/vrp/history", {
         method: 'GET',
         headers: { 'x-license-key': activeLicenseKey }
     })
@@ -52,10 +53,10 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    const API_BASE_URL = "";
+    const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.2 LOADED - Updated Pricing Tiers Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.3 LOADED - Updated Pricing Tiers Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -979,7 +980,7 @@ function bootCommandCenter() {
         liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
     }
 
-    window.initiateSubscriptionRenewal = async function() {
+    window.initiateSubscriptionRenewal = function() {
         const planChoice = prompt(
             "💳 SELECT YOUR PLAN:\n\n" +
             "1. Daily Pass (20 Stops) - ₦3,000\n" +
@@ -1010,8 +1011,8 @@ function bootCommandCenter() {
             amount: amountKobo,
             currency: "NGN",
             ref: 'UYO-' + Math.floor((Math.random() * 1000000000) + 1),
-            callback: async function(response) {
-                const updateRes = await fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
+            callback: function(response) {
+                fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -1020,14 +1021,18 @@ function bootCommandCenter() {
                         days_to_add: daysToAdd,
                         stop_limit: stopLimit
                     })
+                })
+                .then(res => {
+                    if (res.ok) {
+                        alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s) with a ${stopLimit}-stop limit.`);
+                        location.reload(); 
+                    } else {
+                        alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
+                    }
+                })
+                .catch(err => {
+                    alert("⚠️ Network error during activation verification.");
                 });
-                
-                if (updateRes.ok) {
-                    alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s) with a ${stopLimit}-stop limit.`);
-                    location.reload(); 
-                } else {
-                    alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
-                }
             },
             onClose: function() {
                 alert("Transaction cancelled. Optimization remains locked.");
