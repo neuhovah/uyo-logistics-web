@@ -19,6 +19,8 @@
 // v2.1.3: Paystack Engine Fix - Removed async from inline.js callback to prevent strict validation crash, synced API_BASE_URL.
 // v2.1.4: Academic UI Implementation - Added metric spatial scale and collapsible cartographic legend to the bottom-left map UI.
 // v2.1.5: Survey-Grade Cartography - Added Depot to legend and implemented data-driven multi-tier styling for accessibility isochrones.
+// v2.1.6: Legacy Data Integration - Mapped Uyo Prime 'cost_level' seconds to correct survey-grade hex colors with white borders.
+// v2.1.7: Uyo Prime Cartographic Parity - Applied precise stepped opacity gradients and tonal borders for overlapping isochrone aesthetics.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -58,7 +60,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.5 LOADED - Survey-Grade UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.7 LOADED - Survey-Grade UI Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -182,41 +184,43 @@ function bootCommandCenter() {
         collapsed: isMobile 
     }).addTo(map);
 
-    // --- UPDATED: DATA-DRIVEN STYLING FOR MULTI-TIER ISOCHRONES ---
+    // --- UPDATED: 100% SURVEY-GRADE ISOCHRONE STYLING (UYO PRIME PARITY) ---
     const layerStyles = {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
         hotspots: { fillColor: "#ef4444", color: "transparent", fillOpacity: 0.5, interactive: false },
         accessibility: (feature) => {
-            let color = "#166534"; // Fallback Dark Green
-            let opacity = 0.4;
-            let weight = 0;
+            const timeVal = feature.properties?.cost_level || feature.properties?.time || feature.properties?.cost;
             
-            // Check properties for a time/cost threshold from the backend
-            const threshold = feature.properties?.time || feature.properties?.cost || feature.properties?.threshold;
-            
-            if (threshold !== undefined) {
-                if (threshold <= 5) {
-                    color = "#14532d"; // Deep Green for core access
-                    opacity = 0.6;
-                    weight = 1;
-                } else if (threshold <= 10) {
-                    color = "#166534"; // Mid Green
-                    opacity = 0.4;
-                    weight = 1;
-                } else {
-                    color = "#22c55e"; // Light Green for outer reach
-                    opacity = 0.2;
-                    weight = 1;
-                }
+            // 5-Minute Reach (300 seconds) - Core Hotspot
+            if (timeVal <= 300 || (timeVal <= 5 && timeVal > 0)) {
+                return {
+                    fillColor: '#006837', // Deep, solid topographical green
+                    color: '#004529',     // Slightly darker tonal border
+                    weight: 1.5,          // Crisp border thickness
+                    fillOpacity: 0.85,    // High visibility
+                    interactive: false
+                };
+            } 
+            // 10-Minute Reach (600 seconds) - Mid Zone
+            else if (timeVal <= 600 || (timeVal <= 10 && timeVal > 0)) {
+                return {
+                    fillColor: '#31a354', // Medium green
+                    color: '#238b45',
+                    weight: 1,
+                    fillOpacity: 0.5,     // 50% transparency to let the 5-min ring pop underneath
+                    interactive: false
+                };
+            } 
+            // 15-Minute Reach (900 seconds) - Outer Boundary
+            else {
+                return {
+                    fillColor: '#78c679', // Light, soft green
+                    color: '#41ab5d',
+                    weight: 0.5,          // Very subtle border
+                    fillOpacity: 0.25,    // High transparency to bleed seamlessly into the basemap
+                    interactive: false
+                };
             }
-            
-            return {
-                fillColor: color,
-                color: color,
-                weight: weight,
-                fillOpacity: opacity,
-                interactive: false
-            };
         }
     };
 
@@ -259,7 +263,7 @@ function bootCommandCenter() {
     function loadAllDatabaseLayers() {
         fetchSpatialLayer('/hotspots', hotspotLayer, { style: () => layerStyles.hotspots }, 'hotspotPane');
         fetchSpatialLayer('/boundaries', boundaryLayer, { style: layerStyles.boundaries });
-        // Using the new data-driven styling function
+        // Using the perfect UI data-driven styling function
         fetchSpatialLayer('/accessibility', accessibilityLayer, layerStyles.accessibility, 'accessibilityPane');
 
         fetchSpatialLayer('/pois', poiLayer, { 
