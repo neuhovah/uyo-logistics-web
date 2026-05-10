@@ -25,6 +25,7 @@
 // v2.1.9: Restored Getis-Ord Gi* diverging symbology for hotspots for 100% legacy Uyo Prime AI parity.
 // v2.2.0: Final UI Polish - Synchronized cartographic legend with Getis-Ord Gi* standard deviation tiers and inverted z-index panes so accessibility isochrones correctly overlay background market hotspots.
 // v2.2.1: Compact Accessibility Legend - Introduced a horizontal stepped gradient bar to display overlapping 5-10-15 minute isochrones without legend bloat.
+// v2.2.2: Hotspot Legend Refinement - Removed unused cold spot classes and implemented a compact horizontal gradient for 95% and 99% Gi* demand hotspots to maintain UI consistency.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -64,7 +65,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.1 LOADED - Survey-Grade UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.2 LOADED - Survey-Grade UI Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -120,10 +121,14 @@ function bootCommandCenter() {
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #ef4444; opacity: 0.5; width: 16px; margin-right: 6px;"></i> Operations Boundary</div>
                 
                 <div style="font-weight: bold; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px solid #374151; padding-bottom: 2px;">Market Hotspots (Gi*)</div>
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #d7191c; opacity: 0.7; width: 16px; margin-right: 6px;"></i> 99% Hotspot</div>
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #fdae61; opacity: 0.6; width: 16px; margin-right: 6px;"></i> 95% Hotspot</div>
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #abd9e9; opacity: 0.6; width: 16px; margin-right: 6px;"></i> 95% Coldspot</div>
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #2c7bb6; opacity: 0.7; width: 16px; margin-right: 6px;"></i> 99% Coldspot</div>
+                <div style="display: flex; height: 10px; margin-top: 4px; border-radius: 2px; overflow: hidden; border: 1px solid #4b5563;">
+                    <div style="flex: 1; background-color: rgba(253, 174, 97, 0.6);"></div>
+                    <div style="flex: 1; background-color: rgba(215, 25, 28, 0.7);"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 9px; color: #9ca3af; margin-top: 2px; font-weight: bold;">
+                    <span>95% Sig.</span>
+                    <span>99% Sig.</span>
+                </div>
                 
                 <div style="font-weight: bold; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px solid #374151; padding-bottom: 2px;">Accessibility Reach</div>
                 <div style="display: flex; height: 10px; margin-top: 4px; border-radius: 2px; overflow: hidden; border: 1px solid #4b5563;">
