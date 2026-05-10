@@ -23,6 +23,7 @@
 // v2.1.7: Uyo Prime Cartographic Parity - Applied precise stepped opacity gradients and tonal borders for overlapping isochrone aesthetics.
 // v2.1.8: Data-Driven Hotspots & Halo Borders - Applied hierarchical red gradients based on Supabase weight parameters and enforced crisp white halo borders on all polygons.
 // v2.1.9: Restored Getis-Ord Gi* diverging symbology for hotspots for 100% legacy Uyo Prime AI parity.
+// v2.2.0: Final UI Polish - Synchronized cartographic legend with Getis-Ord Gi* standard deviation tiers and inverted z-index panes so accessibility isochrones correctly overlay background market hotspots.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -62,7 +63,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.9 LOADED - Survey-Grade UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.0 LOADED - Survey-Grade UI Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -116,9 +117,14 @@ function bootCommandCenter() {
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-truck" style="color: #3b82f6; width: 16px; margin-right: 6px;"></i> Van Route (Heavy)</div>
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-motorcycle" style="color: #10b981; width: 16px; margin-right: 6px;"></i> Bike Route (Agile)</div>
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #ef4444; opacity: 0.5; width: 16px; margin-right: 6px;"></i> Operations Boundary</div>
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-fire" style="color: #ef4444; width: 16px; margin-right: 6px;"></i> Demand Hotspot</div>
                 
-                <div style="display: flex; align-items: center; margin-top: 6px;">
+                <div style="font-weight: bold; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px solid #374151; padding-bottom: 2px;">Market Hotspots (Gi*)</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #d7191c; opacity: 0.7; width: 16px; margin-right: 6px;"></i> 99% Hotspot</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #fdae61; opacity: 0.6; width: 16px; margin-right: 6px;"></i> 95% Hotspot</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #abd9e9; opacity: 0.6; width: 16px; margin-right: 6px;"></i> 95% Coldspot</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #2c7bb6; opacity: 0.7; width: 16px; margin-right: 6px;"></i> 99% Coldspot</div>
+                
+                <div style="display: flex; align-items: center; margin-top: 8px;">
                     <div style="width: 12px; height: 12px; border-radius: 50%; border: 3px solid #3b82f6; background: #ffffff; margin-right: 6px; margin-left: 1px; box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);"></div> Central Depot
                 </div>
                 <div style="display: flex; align-items: center; margin-top: 4px;">
@@ -151,8 +157,9 @@ function bootCommandCenter() {
     };
     mapLegend.addTo(map);
 
-    map.createPane('accessibilityPane'); map.getPane('accessibilityPane').style.zIndex = 300;
-    map.createPane('hotspotPane');       map.getPane('hotspotPane').style.zIndex = 310;
+    // INVERTED Z-INDEX PANES: Hotspots at the bottom, accessibility rings resting on top
+    map.createPane('hotspotPane');       map.getPane('hotspotPane').style.zIndex = 300;
+    map.createPane('accessibilityPane'); map.getPane('accessibilityPane').style.zIndex = 310;
     map.createPane('routePane');         map.getPane('routePane').style.zIndex = 400; 
     map.createPane('poiPane');           map.getPane('poiPane').style.zIndex = 600; 
 
