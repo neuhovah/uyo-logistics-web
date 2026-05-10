@@ -22,6 +22,7 @@
 // v2.1.6: Legacy Data Integration - Mapped Uyo Prime 'cost_level' seconds to correct survey-grade hex colors with white borders.
 // v2.1.7: Uyo Prime Cartographic Parity - Applied precise stepped opacity gradients and tonal borders for overlapping isochrone aesthetics.
 // v2.1.8: Data-Driven Hotspots & Halo Borders - Applied hierarchical red gradients based on Supabase weight parameters and enforced crisp white halo borders on all polygons.
+// v2.1.9: Restored Getis-Ord Gi* diverging symbology for hotspots for 100% legacy Uyo Prime AI parity.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -61,7 +62,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.8 LOADED - Survey-Grade UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.9 LOADED - Survey-Grade UI Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -190,38 +191,25 @@ function bootCommandCenter() {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
         
         hotspots: (feature) => {
-            // Data-driven styling based on the 'weight' column in your Supabase table
-            const intensity = feature.properties?.weight || 0.5;
-            
-            // Tier 1: Primary High-Demand Hubs (e.g., Akpan Andem / 0.8 Weight)
-            if (intensity >= 0.8) { 
-                return {
-                    fillColor: '#b91c1c', // Deep intense red
-                    color: '#ffffff',     // Crisp white halo
-                    weight: 1.5,
-                    fillOpacity: 0.8,
-                    interactive: false
-                };
+            // --- 100% SURVEY-GRADE PARITY (Getis-Ord Gi* Spatial Econometrics) ---
+            const z = feature.properties?.z_score;
+            const w = feature.properties?.weight;
+
+            // Primary Check: Legacy Z-Score Logic
+            if (z !== undefined) {
+                if (z > 2.58) return { color: "white", weight: 1, fillColor: "#d7191c", fillOpacity: 0.7, interactive: false }; // 99% Hotspot
+                if (z > 1.96) return { color: "white", weight: 1, fillColor: "#fdae61", fillOpacity: 0.6, interactive: false }; // 95% Hotspot
+                if (z < -2.58) return { color: "white", weight: 1, fillColor: "#2c7bb6", fillOpacity: 0.7, interactive: false }; // 99% Coldspot
+                if (z < -1.96) return { color: "white", weight: 1, fillColor: "#abd9e9", fillOpacity: 0.6, interactive: false }; // 95% Coldspot
+                return { stroke: false, fillOpacity: 0, interactive: false }; // Hide non-significant geometries
             } 
-            // Tier 2: Secondary Hubs (e.g., Itam, Plaza / 0.6 Weight)
-            else if (intensity >= 0.6) { 
-                return {
-                    fillColor: '#ef4444', // Standard bright red
-                    color: '#ffffff',     // Crisp white halo
-                    weight: 1.5,
-                    fillOpacity: 0.5,
-                    interactive: false
-                };
-            } 
-            // Tier 3: Emerging Zones (< 0.6 Weight)
-            else { 
-                return {
-                    fillColor: '#f87171', // Soft light red
-                    color: '#ffffff',     // Crisp white halo
-                    weight: 1,
-                    fillOpacity: 0.3,
-                    interactive: false
-                };
+            // Fallback Check: Map new Supabase 'weight' to the Uyo Prime diverging scale
+            else {
+                if (w >= 0.8) return { color: "white", weight: 1, fillColor: "#d7191c", fillOpacity: 0.7, interactive: false };
+                if (w >= 0.6) return { color: "white", weight: 1, fillColor: "#fdae61", fillOpacity: 0.6, interactive: false };
+                if (w <= 0.2) return { color: "white", weight: 1, fillColor: "#2c7bb6", fillOpacity: 0.7, interactive: false };
+                if (w <= 0.4) return { color: "white", weight: 1, fillColor: "#abd9e9", fillOpacity: 0.6, interactive: false };
+                return { stroke: false, fillOpacity: 0, interactive: false };
             }
         },
 
