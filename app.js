@@ -21,6 +21,7 @@
 // v2.1.5: Survey-Grade Cartography - Added Depot to legend and implemented data-driven multi-tier styling for accessibility isochrones.
 // v2.1.6: Legacy Data Integration - Mapped Uyo Prime 'cost_level' seconds to correct survey-grade hex colors with white borders.
 // v2.1.7: Uyo Prime Cartographic Parity - Applied precise stepped opacity gradients and tonal borders for overlapping isochrone aesthetics.
+// v2.1.8: Data-Driven Hotspots & Halo Borders - Applied hierarchical red gradients based on Supabase weight parameters and enforced crisp white halo borders on all polygons.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -60,7 +61,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.1.7 LOADED - Survey-Grade UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.1.8 LOADED - Survey-Grade UI Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -184,10 +185,46 @@ function bootCommandCenter() {
         collapsed: isMobile 
     }).addTo(map);
 
-    // --- UPDATED: 100% SURVEY-GRADE ISOCHRONE STYLING (UYO PRIME PARITY) ---
+    // --- UPDATED: 100% SURVEY-GRADE STYLING (UYO PRIME PARITY) ---
     const layerStyles = {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
-        hotspots: { fillColor: "#ef4444", color: "transparent", fillOpacity: 0.5, interactive: false },
+        
+        hotspots: (feature) => {
+            // Data-driven styling based on the 'weight' column in your Supabase table
+            const intensity = feature.properties?.weight || 0.5;
+            
+            // Tier 1: Primary High-Demand Hubs (e.g., Akpan Andem / 0.8 Weight)
+            if (intensity >= 0.8) { 
+                return {
+                    fillColor: '#b91c1c', // Deep intense red
+                    color: '#ffffff',     // Crisp white halo
+                    weight: 1.5,
+                    fillOpacity: 0.8,
+                    interactive: false
+                };
+            } 
+            // Tier 2: Secondary Hubs (e.g., Itam, Plaza / 0.6 Weight)
+            else if (intensity >= 0.6) { 
+                return {
+                    fillColor: '#ef4444', // Standard bright red
+                    color: '#ffffff',     // Crisp white halo
+                    weight: 1.5,
+                    fillOpacity: 0.5,
+                    interactive: false
+                };
+            } 
+            // Tier 3: Emerging Zones (< 0.6 Weight)
+            else { 
+                return {
+                    fillColor: '#f87171', // Soft light red
+                    color: '#ffffff',     // Crisp white halo
+                    weight: 1,
+                    fillOpacity: 0.3,
+                    interactive: false
+                };
+            }
+        },
+
         accessibility: (feature) => {
             const timeVal = feature.properties?.cost_level || feature.properties?.time || feature.properties?.cost;
             
@@ -195,7 +232,7 @@ function bootCommandCenter() {
             if (timeVal <= 300 || (timeVal <= 5 && timeVal > 0)) {
                 return {
                     fillColor: '#006837', // Deep, solid topographical green
-                    color: '#004529',     // Slightly darker tonal border
+                    color: '#ffffff',     // Crisp white halo border
                     weight: 1.5,          // Crisp border thickness
                     fillOpacity: 0.85,    // High visibility
                     interactive: false
@@ -205,8 +242,8 @@ function bootCommandCenter() {
             else if (timeVal <= 600 || (timeVal <= 10 && timeVal > 0)) {
                 return {
                     fillColor: '#31a354', // Medium green
-                    color: '#238b45',
-                    weight: 1,
+                    color: '#ffffff',     // Crisp white halo border
+                    weight: 1.5,
                     fillOpacity: 0.5,     // 50% transparency to let the 5-min ring pop underneath
                     interactive: false
                 };
@@ -215,8 +252,8 @@ function bootCommandCenter() {
             else {
                 return {
                     fillColor: '#78c679', // Light, soft green
-                    color: '#41ab5d',
-                    weight: 0.5,          // Very subtle border
+                    color: '#ffffff',     // Crisp white halo border
+                    weight: 1,            // Slightly thinner border
                     fillOpacity: 0.25,    // High transparency to bleed seamlessly into the basemap
                     interactive: false
                 };
@@ -261,7 +298,9 @@ function bootCommandCenter() {
     }
 
     function loadAllDatabaseLayers() {
-        fetchSpatialLayer('/hotspots', hotspotLayer, { style: () => layerStyles.hotspots }, 'hotspotPane');
+        // REMOVED the { style: () => ... } wrapper. Passing the data-driven function directly.
+        fetchSpatialLayer('/hotspots', hotspotLayer, layerStyles.hotspots, 'hotspotPane');
+        
         fetchSpatialLayer('/boundaries', boundaryLayer, { style: layerStyles.boundaries });
         // Using the perfect UI data-driven styling function
         fetchSpatialLayer('/accessibility', accessibilityLayer, layerStyles.accessibility, 'accessibilityPane');
@@ -341,7 +380,7 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. FEDERATED CONSENSUS ENGINE (NATIVE LEAFLET CONTROL) ---
+    // --- 7. FEDERATED Consensus Engine (NATIVE LEAFLET CONTROL) ---
     const searchInput = document.getElementById('custom-search');
     let searchContainer = null;
     let dropdownMenu = null;
