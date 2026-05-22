@@ -5,7 +5,9 @@
 //
 // 📋 CHANGELOG
 // v2.0.1 - 2.2.2: Legacy UI & Cartographic Parity Updates.
-// v2.2.3: Fleet Telemetry & Multi-Dimensional Capacity Sync - Added parcel weight input prompts, dynamic vehicle color-coding (Bike vs Van), and integrated the live Uyo Command Center telemetry widget for real-time CO2 offset tracking.
+// v2.2.3: Fleet Telemetry & Multi-Dimensional Capacity Sync.
+// v2.2.4: Unified Carbon Calculus - Absolute parity between Session & Telemetry metrics.
+// v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -45,7 +47,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.3 LOADED - Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.5 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -293,7 +295,7 @@ function bootCommandCenter() {
         console.log(`🗑️ Removed Drop: ${dropId}`);
     };
 
-    // --- STEP 1: PARCEL WEIGHT INTERCEPTION ON MAP CLICK ---
+    // --- PARCEL WEIGHT INTERCEPTION ON MAP CLICK ---
     map.on('click', function(e) {
         let isInside = false;
         if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
@@ -307,7 +309,6 @@ function bootCommandCenter() {
             return; 
         }
         
-        // Intercept and ask for weight before saving the pin
         let weightInput = prompt("Enter parcel weight in kg for this stop (e.g., 2, 15, 30):", "1");
         let parsedWeight = parseInt(weightInput, 10);
         if (isNaN(parsedWeight) || parsedWeight <= 0) {
@@ -494,7 +495,6 @@ function bootCommandCenter() {
                     searchInput.value = '';
                     searchInput.focus();
                     
-                    // --- SEARCH PARCEL WEIGHT INTERCEPTION ---
                     let weightInput = prompt(`Enter parcel weight in kg for ${item.name} (e.g., 2, 15, 30):`, "1");
                     let parsedWeight = parseInt(weightInput, 10);
                     if (isNaN(parsedWeight) || parsedWeight <= 0) {
@@ -580,7 +580,7 @@ function bootCommandCenter() {
         if (reportContainer) reportContainer.style.display = "none";
     };
 
-    // --- STEP 3: UYO COMMAND CENTER TELEMETRY WIDGET HANDLER ---
+    // --- UYO COMMAND CENTER TELEMETRY WIDGET HANDLER ---
     window.updateTelemetryUI = function(apiResponse) {
         // Parse Traffic Status
         const trafficMultiplier = apiResponse.traffic_multiplier || 1.0;
@@ -621,7 +621,6 @@ function bootCommandCenter() {
         if (co2SavedEl) co2SavedEl.innerText = `${co2SavedKg.toFixed(2)} kg`;
     };
 
-    // --- 8. DUAL-SERVER REDUNDANCY & CRASH TRAPPING ---
     window.solveAndDisplay = async function() {
         if (dynamicDeliveries.length === 0) { alert("Drop pins or search for locations first!"); return; }
         
@@ -645,7 +644,6 @@ function bootCommandCenter() {
                 { id: "VAN-01", type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 10000, cost_per_km: 50 }
             ]
         };
-        // Allowing the backend Gatekeeper to inject the commercial 15-vehicle fleet if "All" is selected
         let activeFleet = (vehicleChoice === 'all') ? null : fleetProfiles[vehicleChoice];
         
         const controller = new AbortController();
@@ -694,7 +692,7 @@ function bootCommandCenter() {
             
             window.latestOptimizationResult = data;
             
-            // --- TRIGGER THE TELEMETRY WIDGET ---
+            // Trigger Telemetry Widget
             window.updateTelemetryUI(data);
             
             routeLayerGroup.clearLayers(); 
@@ -775,10 +773,9 @@ function bootCommandCenter() {
             vType = String(vType).charAt(0).toUpperCase() + String(vType).slice(1);
             const vId = r.vehicle_id || `${vType}-${Math.floor(Math.random() * 1000)}`;
             
-            // --- STEP 2: DYNAMIC VEHICLE COLOR-CODING ---
             const isBike = vType.toLowerCase() === 'bike';
-            const color = isBike ? '#28a745' : '#dc3545'; // Agile Green for Bikes, Heavy Red for Vans
-            const routeWeight = isBike ? 4 : 6; // Thinner lines for bikes, thicker for vans
+            const color = isBike ? '#28a745' : '#dc3545';
+            const routeWeight = isBike ? 4 : 6; 
             
             const gpsPath = r.route.map(node => locDict[node]).filter(Boolean);
             if (gpsPath.length < 2) continue;
@@ -882,31 +879,30 @@ function bootCommandCenter() {
         } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
     }
 
+    // --- 100% SURVEY GRADE MATH FIX ---
     function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
-        let manualTimeEst = parseFloat(unoptimizedMins) || 0;
-        
-        if (manualTimeEst === 0 || manualTimeEst > (optimizedMins * 2.0)) {
-            manualTimeEst = optimizedMins * 1.35;
-        }
-        
-        if (manualTimeEst < optimizedMins && optimizedMins > 0) {
-            manualTimeEst = optimizedMins * 1.05; 
-        }
-
+        // 1. Trust the backend unconditionally. No more client-side smoothing.
+        const manualTimeEst = parseFloat(unoptimizedMins) || 0;
         const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
-        const distanceSavedKm = timeSaved * 0.333;
-        const currentFuelSaved = (distanceSavedKm / 6) * 1200; 
-        const currentCo2Saved = (distanceSavedKm / 6) * 2.3; 
-        const sessionEfficiency = optimizedMins > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
+
+        // 2. Unified Survey-Grade Calculus (Identical to Telemetry Widget)
+        const currentFuelSavedLiters = timeSaved * 0.045; // 0.045 Liters saved per optimized minute
+        const currentCo2Saved = currentFuelSavedLiters * 2.31; // 2.31 kg CO2 per Liter
+        
+        // Assuming Premium Motor Spirit (PMS) at ₦1,200 per Liter for the financial engine
+        const currentFuelCostSaved = currentFuelSavedLiters * 1200; 
+        
+        const sessionEfficiency = manualTimeEst > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
         
         const statFuelEl = document.getElementById('stat-fuel');
         const statEffEl = document.getElementById('stat-efficiency');
         const statCo2El = document.getElementById('stat-co2');
 
         if (optimizedMins > 0) {
+            // --- SESSION STATS (Orange/Yellow) ---
             if (statFuelEl) {
                 statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-                statFuelEl.innerText = `₦${Math.floor(currentFuelSaved).toLocaleString()}`;
+                statFuelEl.innerText = `₦${Math.floor(currentFuelCostSaved).toLocaleString()}`;
                 statFuelEl.style.color = "#fbbf24"; 
             }
             if (statEffEl) {
@@ -920,6 +916,7 @@ function bootCommandCenter() {
                 statCo2El.style.color = "#fbbf24";
             }
         } else {
+            // --- LIFETIME STATS (Blue/Green/Red) ---
             if (statFuelEl) {
                 statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
                 statFuelEl.innerText = `₦${Math.floor(lifetimeStats.fuel).toLocaleString()}`;
@@ -1090,26 +1087,53 @@ function bootCommandCenter() {
             if (liveMarkers[data.vehicle_id]) {
                 liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
             } else {
+                // 1. Color Parity: Determine if it's a bike or van based on the ID
+                const isBike = String(data.vehicle_id).toLowerCase().includes('bike');
+                const markerColor = isBike ? '#28a745' : '#dc3545'; // Green for Bike, Red for Van
+
+                // 2. Dynamic Call Sign Badge
                 const icon = L.divIcon({ 
                     className: 'live-ping', 
-                    html: `<div style="background: #ef4444; width:16px; height:16px; border-radius:50%; box-shadow: 0 0 15px #ef4444; border: 2.5px solid white;"></div>`,
+                    html: `
+                        <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+                            <div id="ping-dot-${data.vehicle_id}" style="background: ${markerColor}; width:16px; height:16px; border-radius:50%; box-shadow: 0 0 15px ${markerColor}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease;"></div>
+                            
+                            <div id="ping-badge-${data.vehicle_id}" style="position: absolute; left: 20px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${markerColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
+                                <i class="fa-solid ${isBike ? 'fa-motorcycle' : 'fa-truck'} mr-1"></i> ${data.vehicle_id}
+                            </div>
+                        </div>
+                    `,
                     iconSize: [16, 16],
                     iconAnchor: [8, 8]
                 });
                 liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {icon: icon, pane: 'poiPane'}).addTo(map);
             }
             
+            // 3. Deviation Alert Override
             if (data.deviation_alert) {
-                const el = liveMarkers[data.vehicle_id].getElement().firstChild;
-                el.style.background = '#f97316'; 
-                el.style.boxShadow = '0 0 25px #f97316';
-                el.style.border = '3px solid #000000';
+                const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
+                const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+                if (dotEl && badgeEl) {
+                    dotEl.style.background = '#f97316'; 
+                    dotEl.style.boxShadow = '0 0 25px #f97316';
+                    dotEl.style.border = '3px solid #000000';
+                    badgeEl.style.border = '1px solid #f97316';
+                    badgeEl.style.color = '#f97316';
+                }
                 console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
             } else {
-                const el = liveMarkers[data.vehicle_id].getElement().firstChild;
-                el.style.background = '#ef4444'; 
-                el.style.boxShadow = '0 0 15px #ef4444';
-                el.style.border = '2.5px solid white';
+                // Restore normal colors if they get back on track
+                const isBike = String(data.vehicle_id).toLowerCase().includes('bike');
+                const markerColor = isBike ? '#28a745' : '#dc3545';
+                const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
+                const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+                if (dotEl && badgeEl) {
+                    dotEl.style.background = markerColor; 
+                    dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
+                    dotEl.style.border = '2.5px solid white';
+                    badgeEl.style.border = `1px solid ${markerColor}`;
+                    badgeEl.style.color = 'white';
+                }
             }
             
             if (data.status === 'completed') { 
