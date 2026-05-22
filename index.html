@@ -37,22 +37,7 @@
         ::-webkit-scrollbar-track { background: #1f2937; }
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 10px; }
 
-        /* --- NEW: Telemetry Widget Styling --- */
-        .telemetry-card {
-            position: absolute;
-            top: 75px; /* Safely clears the layers icon */
-            right: 15px;
-            z-index: 1000; 
-            background: rgba(31, 41, 55, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid #374151;
-            border-radius: 8px;
-            padding: 15px;
-            width: 260px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-            pointer-events: auto;
-        }
-
+        /* --- Pulse Animation for Live Traffic Indicator --- */
         .pulse-dot {
             height: 10px;
             width: 10px;
@@ -70,7 +55,6 @@
             70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
         }
-        /* ------------------------------------- */
     </style>
 </head>
 <body class="bg-gray-900 text-white font-sans">
@@ -95,9 +79,12 @@
     </header>
 
     <main class="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-12 gap-6">
+        
         <div class="lg:col-span-3 bg-gray-800 p-4 rounded-xl border border-gray-700 h-full flex flex-col">
-            <div id="bi-dashboard" class="mb-6 space-y-3 border-b border-gray-700 pb-6">
-                <h3 class="text-blue-400 text-[10px] font-black uppercase tracking-widest tracking-tighter">Operational Intelligence</h3>
+            
+            <div id="unified-intelligence" class="mb-6 space-y-4 border-b border-gray-700 pb-6">
+                <h3 class="text-blue-400 text-[10px] font-black uppercase tracking-widest">Operational Intelligence</h3>
+                
                 <div class="grid grid-cols-3 gap-1.5">
                     <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 text-center">
                         <p class="text-gray-500 text-[7px] font-bold uppercase">Fuel Saved</p>
@@ -110,6 +97,25 @@
                     <div class="bg-gray-900 p-2 rounded-lg border border-gray-700 text-center">
                         <p class="text-gray-500 text-[7px] font-bold uppercase">CO2 Saved</p>
                         <p id="stat-co2" class="text-red-400 text-[11px] font-mono font-black">0 kg</p>
+                    </div>
+                </div>
+
+                <div class="bg-gray-900 p-3 rounded-lg border border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[9px] font-bold text-gray-500 uppercase">Live Traffic</span>
+                        <div id="traffic-indicator" class="pulse-dot bg-green"></div>
+                    </div>
+                    <p id="traffic-text" class="text-xs font-bold text-gray-200 mb-3">Optimal Flow</p>
+                    
+                    <div class="flex justify-between border-t border-gray-700 pt-2">
+                        <div class="flex flex-col">
+                            <span class="text-[8px] text-gray-500 uppercase tracking-wider">Time Saved</span>
+                            <span id="time-saved-val" class="text-xs font-black text-white">0.0 mins</span>
+                        </div>
+                        <div class="flex flex-col text-right">
+                            <span class="text-[8px] text-gray-500 uppercase tracking-wider">CO2 Prevented</span>
+                            <span id="co2-saved-val" class="text-xs font-black text-green-400">0.00 kg</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -150,26 +156,6 @@
                 </button>
             </div>
 
-            <div id="telemetry-widget" class="telemetry-card hidden md:block"> <h3 class="text-[10px] font-black uppercase text-blue-400 tracking-widest mb-2 border-b border-gray-600 pb-2">
-                    <i class="fa-solid fa-satellite-dish mr-1"></i> Uyo Command Center
-                </h3>
-                
-                <div class="flex items-center mb-3">
-                    <span id="traffic-indicator" class="pulse-dot bg-green"></span>
-                    <span id="traffic-text" class="text-xs font-bold text-gray-200 ml-2">Awaiting live flow...</span>
-                </div>
-                
-                <div class="flex justify-between border-t border-gray-700 pt-3">
-                    <div class="flex flex-col">
-                        <span class="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Time Saved</span>
-                        <span id="time-saved-val" class="text-sm font-black text-white">0.0 mins</span>
-                    </div>
-                    <div class="flex flex-col text-right">
-                        <span class="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">CO2 Prevented</span>
-                        <span id="co2-saved-val" class="text-sm font-black text-green-400">0.00 kg</span>
-                    </div>
-                </div>
-            </div>
             <div id="map" class="h-full w-full z-[1]"></div>
         </div>
     </main>
@@ -187,5 +173,5 @@
     </script>
     
     <script src="https://js.paystack.co/v1/inline.js"></script>
-    <script src="app.js?v=8"></script> </body>
+    <script src="app.js?v=9"></script> </body>
 </html>
