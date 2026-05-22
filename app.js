@@ -4,28 +4,8 @@
 // ==============================================================================
 //
 // 📋 CHANGELOG
-// v2.0.1: Geofence tuning - Increased boundary padding to 40%.
-// v2.0.2: Local-First Search - Intercepted queries with Foursquare POI layer.
-// v2.0.3: Safe Fallback & Crash Fix - Resolved Leaflet properties TypeError.
-// v2.0.4: Federated Consensus Engine - Parallel fetching (Local+OSM+Google).
-// v2.0.5: Forced Vercel Sync & DOM Safety.
-// v2.0.6: Indestructible Search UI.
-// v2.0.7: Mobile UX Overhaul.
-// v2.0.8: Native Leaflet UI Integration.
-// v2.0.9: Search Engine Stabilization - Removed silent GeoJSON bounding crashes and fixed CSS overflow clipping on dropdowns.
-// v2.1.0: Rapid-Fire Dispatch UX - Auto-clears and auto-focuses search input after pin drop.
-// v2.1.1: Billing System Patch - Injected Paystack Inline library into HTML to resolve ReferenceError during subscription renewals.
-// v2.1.2: Pricing Model Update - Adjusted Paystack tiers to 3k/25k/70k with corresponding 20/200/600 stop limits.
-// v2.1.3: Paystack Engine Fix - Removed async from inline.js callback to prevent strict validation crash, synced API_BASE_URL.
-// v2.1.4: Academic UI Implementation - Added metric spatial scale and collapsible cartographic legend to the bottom-left map UI.
-// v2.1.5: Survey-Grade Cartography - Added Depot to legend and implemented data-driven multi-tier styling for accessibility isochrones.
-// v2.1.6: Legacy Data Integration - Mapped Uyo Prime 'cost_level' seconds to correct survey-grade hex colors with white borders.
-// v2.1.7: Uyo Prime Cartographic Parity - Applied precise stepped opacity gradients and tonal borders for overlapping isochrone aesthetics.
-// v2.1.8: Data-Driven Hotspots & Halo Borders - Applied hierarchical red gradients based on Supabase weight parameters and enforced crisp white halo borders on all polygons.
-// v2.1.9: Restored Getis-Ord Gi* diverging symbology for hotspots for 100% legacy Uyo Prime AI parity.
-// v2.2.0: Final UI Polish - Synchronized cartographic legend with Getis-Ord Gi* standard deviation tiers and inverted z-index panes so accessibility isochrones correctly overlay background market hotspots.
-// v2.2.1: Compact Accessibility Legend - Introduced a horizontal stepped gradient bar to display overlapping 5-10-15 minute isochrones without legend bloat.
-// v2.2.2: Hotspot Legend Refinement - Removed unused cold spot classes and implemented a compact horizontal gradient for 95% and 99% Gi* demand hotspots to maintain UI consistency.
+// v2.0.1 - 2.2.2: Legacy UI & Cartographic Parity Updates.
+// v2.2.3: Fleet Telemetry & Multi-Dimensional Capacity Sync - Added parcel weight input prompts, dynamic vehicle color-coding (Bike vs Van), and integrated the live Uyo Command Center telemetry widget for real-time CO2 offset tracking.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -65,7 +45,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.2 LOADED - Survey-Grade UI Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.3 LOADED - Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -95,18 +75,12 @@ function bootCommandCenter() {
     const map = L.map('map', { center: uyoCenter, zoom: 13, maxZoom: 22, layers: [darkMap], zoomControl: false });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // --- ACADEMIC REQUIREMENT: SPATIAL SCALE ---
     L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
 
-    // --- ACADEMIC REQUIREMENT: COLLAPSIBLE MAP LEGEND ---
     const mapLegend = L.control({ position: 'bottomleft' });
     mapLegend.onAdd = function () {
         const div = L.DomUtil.create('div', 'info legend');
-        
-        // Base container styling
         div.style.cssText = "background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; border: 1px solid #374151; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); color: #e5e7eb; font-family: ui-sans-serif, system-ui, sans-serif; backdrop-filter: blur(4px); overflow: hidden; transition: all 0.3s ease; margin-bottom: 5px;";
-
-        // Inject the interactive HTML structure
         div.innerHTML = `
             <div id="legend-header" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none;">
                 <span style="font-weight: 900; color: #60a5fa; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px;">
@@ -116,8 +90,8 @@ function bootCommandCenter() {
             </div>
             
             <div id="legend-content" style="padding: 0 12px 12px 12px; font-size: 11px; line-height: 1.8; display: none;">
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-truck" style="color: #3b82f6; width: 16px; margin-right: 6px;"></i> Van Route (Heavy)</div>
-                <div style="display: flex; align-items: center;"><i class="fa-solid fa-motorcycle" style="color: #10b981; width: 16px; margin-right: 6px;"></i> Bike Route (Agile)</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-truck" style="color: #dc3545; width: 16px; margin-right: 6px;"></i> Van Route (Heavy)</div>
+                <div style="display: flex; align-items: center;"><i class="fa-solid fa-motorcycle" style="color: #28a745; width: 16px; margin-right: 6px;"></i> Bike Route (Agile)</div>
                 <div style="display: flex; align-items: center;"><i class="fa-solid fa-square" style="color: #ef4444; opacity: 0.5; width: 16px; margin-right: 6px;"></i> Operations Boundary</div>
                 
                 <div style="font-weight: bold; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px solid #374151; padding-bottom: 2px;">Market Hotspots (Gi*)</div>
@@ -153,29 +127,22 @@ function bootCommandCenter() {
                 </div>
             </div>
         `;
-
-        // Prevent click events from passing through to the map
         L.DomEvent.disableClickPropagation(div);
-
-        // Add the toggle logic
         setTimeout(() => {
             const header = document.getElementById('legend-header');
             const content = document.getElementById('legend-content');
             const chevron = document.getElementById('legend-chevron');
             let isOpen = false;
-
             header.onclick = function() {
                 isOpen = !isOpen;
                 content.style.display = isOpen ? 'block' : 'none';
                 chevron.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
             };
         }, 100);
-
         return div;
     };
     mapLegend.addTo(map);
 
-    // INVERTED Z-INDEX PANES: Hotspots at the bottom, accessibility rings resting on top
     map.createPane('hotspotPane');       map.getPane('hotspotPane').style.zIndex = 300;
     map.createPane('accessibilityPane'); map.getPane('accessibilityPane').style.zIndex = 310;
     map.createPane('routePane');         map.getPane('routePane').style.zIndex = 400; 
@@ -211,24 +178,18 @@ function bootCommandCenter() {
         collapsed: isMobile 
     }).addTo(map);
 
-    // --- UPDATED: 100% SURVEY-GRADE STYLING (UYO PRIME PARITY) ---
     const layerStyles = {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
-        
         hotspots: (feature) => {
-            // --- 100% SURVEY-GRADE PARITY (Getis-Ord Gi* Spatial Econometrics) ---
             const z = feature.properties?.z_score;
             const w = feature.properties?.weight;
-
-            // Primary Check: Legacy Z-Score Logic
             if (z !== undefined) {
-                if (z > 2.58) return { color: "white", weight: 1, fillColor: "#d7191c", fillOpacity: 0.7, interactive: false }; // 99% Hotspot
-                if (z > 1.96) return { color: "white", weight: 1, fillColor: "#fdae61", fillOpacity: 0.6, interactive: false }; // 95% Hotspot
-                if (z < -2.58) return { color: "white", weight: 1, fillColor: "#2c7bb6", fillOpacity: 0.7, interactive: false }; // 99% Coldspot
-                if (z < -1.96) return { color: "white", weight: 1, fillColor: "#abd9e9", fillOpacity: 0.6, interactive: false }; // 95% Coldspot
-                return { stroke: false, fillOpacity: 0, interactive: false }; // Hide non-significant geometries
+                if (z > 2.58) return { color: "white", weight: 1, fillColor: "#d7191c", fillOpacity: 0.7, interactive: false }; 
+                if (z > 1.96) return { color: "white", weight: 1, fillColor: "#fdae61", fillOpacity: 0.6, interactive: false }; 
+                if (z < -2.58) return { color: "white", weight: 1, fillColor: "#2c7bb6", fillOpacity: 0.7, interactive: false }; 
+                if (z < -1.96) return { color: "white", weight: 1, fillColor: "#abd9e9", fillOpacity: 0.6, interactive: false }; 
+                return { stroke: false, fillOpacity: 0, interactive: false }; 
             } 
-            // Fallback Check: Map new Supabase 'weight' to the Uyo Prime diverging scale
             else {
                 if (w >= 0.8) return { color: "white", weight: 1, fillColor: "#d7191c", fillOpacity: 0.7, interactive: false };
                 if (w >= 0.6) return { color: "white", weight: 1, fillColor: "#fdae61", fillOpacity: 0.6, interactive: false };
@@ -237,39 +198,16 @@ function bootCommandCenter() {
                 return { stroke: false, fillOpacity: 0, interactive: false };
             }
         },
-
         accessibility: (feature) => {
             const timeVal = feature.properties?.cost_level || feature.properties?.time || feature.properties?.cost;
-            
-            // 5-Minute Reach (300 seconds) - Core Hotspot
             if (timeVal <= 300 || (timeVal <= 5 && timeVal > 0)) {
-                return {
-                    fillColor: '#006837', // Deep, solid topographical green
-                    color: '#ffffff',     // Crisp white halo border
-                    weight: 1.5,          // Crisp border thickness
-                    fillOpacity: 0.85,    // High visibility
-                    interactive: false
-                };
+                return { fillColor: '#006837', color: '#ffffff', weight: 1.5, fillOpacity: 0.85, interactive: false };
             } 
-            // 10-Minute Reach (600 seconds) - Mid Zone
             else if (timeVal <= 600 || (timeVal <= 10 && timeVal > 0)) {
-                return {
-                    fillColor: '#31a354', // Medium green
-                    color: '#ffffff',     // Crisp white halo border
-                    weight: 1.5,
-                    fillOpacity: 0.5,     // 50% transparency to let the 5-min ring pop underneath
-                    interactive: false
-                };
+                return { fillColor: '#31a354', color: '#ffffff', weight: 1.5, fillOpacity: 0.5, interactive: false };
             } 
-            // 15-Minute Reach (900 seconds) - Outer Boundary
             else {
-                return {
-                    fillColor: '#78c679', // Light, soft green
-                    color: '#ffffff',     // Crisp white halo border
-                    weight: 1,            // Slightly thinner border
-                    fillOpacity: 0.25,    // High transparency to bleed seamlessly into the basemap
-                    interactive: false
-                };
+                return { fillColor: '#78c679', color: '#ffffff', weight: 1, fillOpacity: 0.25, interactive: false };
             }
         }
     };
@@ -311,11 +249,8 @@ function bootCommandCenter() {
     }
 
     function loadAllDatabaseLayers() {
-        // REMOVED the { style: () => ... } wrapper. Passing the data-driven function directly.
         fetchSpatialLayer('/hotspots', hotspotLayer, layerStyles.hotspots, 'hotspotPane');
-        
         fetchSpatialLayer('/boundaries', boundaryLayer, { style: layerStyles.boundaries });
-        // Using the perfect UI data-driven styling function
         fetchSpatialLayer('/accessibility', accessibilityLayer, layerStyles.accessibility, 'accessibilityPane');
 
         fetchSpatialLayer('/pois', poiLayer, { 
@@ -358,6 +293,7 @@ function bootCommandCenter() {
         console.log(`🗑️ Removed Drop: ${dropId}`);
     };
 
+    // --- STEP 1: PARCEL WEIGHT INTERCEPTION ON MAP CLICK ---
     map.on('click', function(e) {
         let isInside = false;
         if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
@@ -371,15 +307,23 @@ function bootCommandCenter() {
             return; 
         }
         
+        // Intercept and ask for weight before saving the pin
+        let weightInput = prompt("Enter parcel weight in kg for this stop (e.g., 2, 15, 30):", "1");
+        let parsedWeight = parseInt(weightInput, 10);
+        if (isNaN(parsedWeight) || parsedWeight <= 0) {
+            parsedWeight = 1; 
+        }
+
         const cleanLat = parseFloat(e.latlng.lat.toFixed(6));
         const cleanLng = parseFloat(e.latlng.lng.toFixed(6));
         
         const dropId = "Drop_" + Math.floor(Math.random() * 10000);
-        dynamicDeliveries.push({ id: dropId, lat: cleanLat, lon: cleanLng, weight: 1 });
+        dynamicDeliveries.push({ id: dropId, lat: cleanLat, lon: cleanLng, weight: parsedWeight });
         
         const popupContent = `
             <div style="text-align: center;">
                 <b style="color: #1f2937;">Order: ${dropId}</b><br>
+                <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
                 <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                     <i class="fa-solid fa-trash"></i> Remove Drop
                 </button>
@@ -393,14 +337,12 @@ function bootCommandCenter() {
         }).addTo(unassignedPinsLayer).bindPopup(popupContent);
     });
 
-    // --- 7. FEDERATED Consensus Engine (NATIVE LEAFLET CONTROL) ---
     const searchInput = document.getElementById('custom-search');
     let searchContainer = null;
     let dropdownMenu = null;
 
     if (searchInput) {
         searchContainer = searchInput.parentElement;
-        
         dropdownMenu = document.createElement('div');
         dropdownMenu.id = 'search-dropdown';
         dropdownMenu.style.cssText = 'position:absolute; top:calc(100% + 5px); left:0; width:100%; background:#1f2937; color:white; z-index:9999; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.8); display:none; max-height:300px; overflow-y:auto; font-family: ui-sans-serif, system-ui, sans-serif; pointer-events:auto;';
@@ -420,13 +362,10 @@ function bootCommandCenter() {
                 searchContainer.style.width = isMobile ? '65vw' : '350px';
                 searchContainer.style.margin = '10px';
                 searchContainer.style.zIndex = 'auto'; 
-                
                 searchContainer.classList.remove('overflow-hidden');
                 searchContainer.style.overflow = 'visible';
-                
                 L.DomEvent.disableClickPropagation(searchContainer);
                 L.DomEvent.disableScrollPropagation(searchContainer);
-                
                 return searchContainer;
             }
         });
@@ -453,7 +392,6 @@ function bootCommandCenter() {
         const lowerQuery = query.toLowerCase();
 
         try {
-            // --- SOURCE 1: LOCAL DATABASE ---
             poiLayer.eachLayer(layer => {
                 const props = layer?.feature?.properties;
                 if (!props) return; 
@@ -467,7 +405,6 @@ function bootCommandCenter() {
                 }
             });
 
-            // --- SOURCE 2 & 3: NOMINATIM & GOOGLE ---
             const searchPromises = [];
 
             searchPromises.push(
@@ -512,15 +449,12 @@ function bootCommandCenter() {
             await Promise.allSettled(searchPromises);
 
             const safeBounds = uyoMathematicalBounds.pad(0.5); 
-            
             let uniqueResults = [];
             
             combinedResults.forEach(res => {
                 if(!res.lat || !res.lng || isNaN(res.lat) || isNaN(res.lng)) return; 
-                
                 const targetLatLng = L.latLng(res.lat, res.lng);
                 if (safeBounds.contains(targetLatLng)) {
-                    // Prevent duplicate pins from different APIs
                     const isDuplicate = uniqueResults.some(u => Math.abs(u.lat - res.lat) < 0.001 && Math.abs(u.lng - res.lng) < 0.001);
                     if (!isDuplicate) uniqueResults.push(res);
                 }
@@ -557,18 +491,25 @@ function bootCommandCenter() {
 
                 opt.onclick = () => {
                     dropdownMenu.style.display = 'none';
-                    
                     searchInput.value = '';
                     searchInput.focus();
                     
+                    // --- SEARCH PARCEL WEIGHT INTERCEPTION ---
+                    let weightInput = prompt(`Enter parcel weight in kg for ${item.name} (e.g., 2, 15, 30):`, "1");
+                    let parsedWeight = parseInt(weightInput, 10);
+                    if (isNaN(parsedWeight) || parsedWeight <= 0) {
+                        parsedWeight = 1; 
+                    }
+                    
                     const dropId = "Search_" + Math.floor(Math.random() * 10000);
-                    dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: 1 });
+                    dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: parsedWeight });
 
                     const popupContent = `
                         <div style="text-align: center;">
                             <b style="color: #1f2937;">Dispatched to:</b><br>
                             <span style="font-size: 11px; font-weight: bold;">${item.name}</span><br>
                             <span style="font-size: 10px; color: #4b5563;">${item.address}</span><br>
+                            <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
                             <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                                 <i class="fa-solid fa-trash"></i> Remove Drop
                             </button>
@@ -639,6 +580,47 @@ function bootCommandCenter() {
         if (reportContainer) reportContainer.style.display = "none";
     };
 
+    // --- STEP 3: UYO COMMAND CENTER TELEMETRY WIDGET HANDLER ---
+    window.updateTelemetryUI = function(apiResponse) {
+        // Parse Traffic Status
+        const trafficMultiplier = apiResponse.traffic_multiplier || 1.0;
+        const trafficText = document.getElementById('traffic-text');
+        const indicator = document.getElementById('traffic-indicator');
+        
+        if (trafficText && indicator) {
+            if (trafficMultiplier > 1.5) {
+                trafficText.innerText = `Heavy Congestion (${trafficMultiplier}x Penalty)`;
+                indicator.className = "pulse-dot bg-red";
+            } else {
+                trafficText.innerText = "Optimal Free-Flowing Traffic";
+                indicator.className = "pulse-dot bg-green";
+            }
+        }
+
+        // Parse Savings Data
+        const empiricalBaselineMins = apiResponse.empirical_baseline || 0;
+        let totalOptimizedMins = 0;
+        
+        if (apiResponse.routes && apiResponse.routes.length > 0) {
+            apiResponse.routes.forEach(vehicleRoute => {
+                totalOptimizedMins += (vehicleRoute.total_time_mins || 0);
+            });
+        }
+
+        const timeSavedMins = Math.max(0, empiricalBaselineMins - totalOptimizedMins);
+        
+        // Survey-grade CO2 calculation (Assuming 45ml fuel saved per minute optimized)
+        const fuelSavedLiters = timeSavedMins * 0.045;
+        const co2SavedKg = fuelSavedLiters * 2.31;
+
+        // Update DOM
+        const timeSavedEl = document.getElementById('time-saved-val');
+        const co2SavedEl = document.getElementById('co2-saved-val');
+        
+        if (timeSavedEl) timeSavedEl.innerText = `${timeSavedMins.toFixed(1)} mins`;
+        if (co2SavedEl) co2SavedEl.innerText = `${co2SavedKg.toFixed(2)} kg`;
+    };
+
     // --- 8. DUAL-SERVER REDUNDANCY & CRASH TRAPPING ---
     window.solveAndDisplay = async function() {
         if (dynamicDeliveries.length === 0) { alert("Drop pins or search for locations first!"); return; }
@@ -663,7 +645,8 @@ function bootCommandCenter() {
                 { id: "VAN-01", type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 10000, cost_per_km: 50 }
             ]
         };
-        let activeFleet = (vehicleChoice === 'all') ? [...fleetProfiles.bike, ...fleetProfiles.van] : fleetProfiles[vehicleChoice];
+        // Allowing the backend Gatekeeper to inject the commercial 15-vehicle fleet if "All" is selected
+        let activeFleet = (vehicleChoice === 'all') ? null : fleetProfiles[vehicleChoice];
         
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000); 
@@ -710,6 +693,9 @@ function bootCommandCenter() {
             const data = await response.json();
             
             window.latestOptimizationResult = data;
+            
+            // --- TRIGGER THE TELEMETRY WIDGET ---
+            window.updateTelemetryUI(data);
             
             routeLayerGroup.clearLayers(); 
             unassignedPinsLayer.clearLayers();
@@ -789,7 +775,10 @@ function bootCommandCenter() {
             vType = String(vType).charAt(0).toUpperCase() + String(vType).slice(1);
             const vId = r.vehicle_id || `${vType}-${Math.floor(Math.random() * 1000)}`;
             
-            const color = vType.toLowerCase() === 'van' ? '#3b82f6' : '#10b981';
+            // --- STEP 2: DYNAMIC VEHICLE COLOR-CODING ---
+            const isBike = vType.toLowerCase() === 'bike';
+            const color = isBike ? '#28a745' : '#dc3545'; // Agile Green for Bikes, Heavy Red for Vans
+            const routeWeight = isBike ? 4 : 6; // Thinner lines for bikes, thicker for vans
             
             const gpsPath = r.route.map(node => locDict[node]).filter(Boolean);
             if (gpsPath.length < 2) continue;
@@ -826,7 +815,7 @@ function bootCommandCenter() {
                     const routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
                     window.activeDeployments[vId] = routeCoords;
 
-                    const routeLine = L.polyline(routeCoords, { color: color, weight: 6, opacity: 0.9, pane: 'routePane' }).addTo(routeLayerGroup);
+                    const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(routeLayerGroup);
                     
                     let sequenceCounter = 1;
                     r.route.forEach((node, idx) => {
@@ -1304,7 +1293,7 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
                 stop.stop_sequence,
                 stop.arrival_time || "00:00 AM",
                 stop.node_id,
-                stop.demand || stop.inventory_load || 0,
+                stop.demand || stop.weight_load_after_stop || stop.inventory_load || 0,
                 Number(stop.cumulative_mins || 0).toFixed(2),
                 status
             ].join(",");
