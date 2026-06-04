@@ -8,7 +8,7 @@
 // v2.2.3: Fleet Telemetry & Multi-Dimensional Capacity Sync.
 // v2.2.4: Unified Carbon Calculus - Absolute parity between Session & Telemetry metrics.
 // v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
-// v2.2.6: Dynamic Fleet Emojis applied to Polyline Decorators.
+// v2.2.6: Dynamic Emojis - Complete Cartographic Parity across Routes & Live Telemetry.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -827,7 +827,6 @@ function bootCommandCenter() {
 
                     try {
                         if (typeof L.polylineDecorator === 'function') {
-                            // Dynamically assign the dispatch emoji based on the existing isBike boolean
                             const fleetEmoji = isBike ? '🏍️' : '🚐';
                             
                             L.polylineDecorator(routeLine, { 
@@ -1107,24 +1106,25 @@ function bootCommandCenter() {
             if (liveMarkers[data.vehicle_id]) {
                 liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
             } else {
-                // 1. Color Parity: Determine if it's a bike or van based on the ID
                 const isBike = String(data.vehicle_id).toLowerCase().includes('bike');
-                const markerColor = isBike ? '#28a745' : '#dc3545'; // Green for Bike, Red for Van
+                const markerColor = isBike ? '#28a745' : '#dc3545';
+                const fleetEmoji = isBike ? '🏍️' : '🚐';
 
-                // 2. Dynamic Call Sign Badge
                 const icon = L.divIcon({ 
                     className: 'live-ping', 
                     html: `
                         <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-                            <div id="ping-dot-${data.vehicle_id}" style="background: ${markerColor}; width:16px; height:16px; border-radius:50%; box-shadow: 0 0 15px ${markerColor}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease;"></div>
+                            <div id="ping-dot-${data.vehicle_id}" style="background: ${markerColor}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${markerColor}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; font-size: 14px;">
+                                ${fleetEmoji}
+                            </div>
                             
-                            <div id="ping-badge-${data.vehicle_id}" style="position: absolute; left: 20px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${markerColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
-                                <i class="fa-solid ${isBike ? 'fa-motorcycle' : 'fa-truck'} mr-1"></i> ${data.vehicle_id}
+                            <div id="ping-badge-${data.vehicle_id}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${markerColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
+                                ${fleetEmoji} ${data.vehicle_id}
                             </div>
                         </div>
                     `,
-                    iconSize: [16, 16],
-                    iconAnchor: [8, 8]
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
                 });
                 liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {icon: icon, pane: 'poiPane'}).addTo(map);
             }
