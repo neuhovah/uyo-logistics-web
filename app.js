@@ -8,6 +8,7 @@
 // v2.2.3: Fleet Telemetry & Multi-Dimensional Capacity Sync.
 // v2.2.4: Unified Carbon Calculus - Absolute parity between Session & Telemetry metrics.
 // v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
+// v2.2.6: Dynamic Fleet Emojis applied to Polyline Decorators.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -47,7 +48,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.5 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.6 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -826,8 +827,27 @@ function bootCommandCenter() {
 
                     try {
                         if (typeof L.polylineDecorator === 'function') {
+                            // Dynamically assign the dispatch emoji based on the existing isBike boolean
+                            const fleetEmoji = isBike ? '🏍️' : '🚐';
+                            
                             L.polylineDecorator(routeLine, { 
-                                patterns: [{ offset: 30, repeat: 70, symbol: L.Symbol.arrowHead({ pixelSize: 14, polygon: true, pathOptions: { color: '#ffffff', fillOpacity: 1, weight: 0, pane: 'routePane' } }) }] 
+                                patterns: [
+                                    { 
+                                        offset: '0%', 
+                                        repeat: '70px', 
+                                        symbol: L.Symbol.marker({ 
+                                            rotate: true, 
+                                            markerOptions: { 
+                                                icon: L.divIcon({ 
+                                                    html: `<div style="font-size: 18px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); display: flex; align-items: center; justify-content: center;">${fleetEmoji}</div>`, 
+                                                    className: 'animated-route-flow',
+                                                    iconSize: [24, 24],
+                                                    iconAnchor: [12, 12]
+                                                }) 
+                                            } 
+                                        }) 
+                                    }
+                                ] 
                             }).addTo(routeLayerGroup);
                         }
                     } catch(err) { console.warn("Polyline Decorator skipped."); }
