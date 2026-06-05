@@ -9,6 +9,7 @@
 // v2.2.4: Unified Carbon Calculus - Absolute parity between Session & Telemetry metrics.
 // v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
 // v2.2.6: Dynamic Emojis - Complete Cartographic Parity across Routes & Live Telemetry.
+// v2.2.7: Fleet Registry Sync - Absolute Parity between Routing Engine and Telemetry Widgets.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -48,7 +49,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.6 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.7 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -161,6 +162,7 @@ function bootCommandCenter() {
     let unassignedPinsLayer = L.layerGroup().addTo(map);
 
     window.activeDeployments = {}; 
+    window.fleetRegistry = {}; // NEW: Synchronizes vehicle types between routes and telemetry
 
     const baseMaps = { 
         "Command Center (Dark)": darkMap, 
@@ -559,6 +561,7 @@ function bootCommandCenter() {
         routeLayerGroup.clearLayers(); 
         dynamicDeliveries = []; 
         window.activeDeployments = {}; 
+        window.fleetRegistry = {};
         
         if (typeof liveMarkers !== 'undefined') {
             for (let id in liveMarkers) {
@@ -699,6 +702,7 @@ function bootCommandCenter() {
             routeLayerGroup.clearLayers(); 
             unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
+            window.fleetRegistry = {}; // Clear registry on new solve
 
             let backendOptimizedMins = 0;
             data.routes.forEach(r => {
@@ -775,6 +779,10 @@ function bootCommandCenter() {
             const vId = r.vehicle_id || `${vType}-${Math.floor(Math.random() * 1000)}`;
             
             const isBike = vType.toLowerCase() === 'bike';
+            
+            // SAVE TO SHARED MEMORY FOR TELEMETRY
+            window.fleetRegistry[vId] = isBike; 
+
             const color = isBike ? '#28a745' : '#dc3545';
             const routeWeight = isBike ? 4 : 6; 
             
@@ -827,26 +835,16 @@ function bootCommandCenter() {
 
                     try {
                         if (typeof L.polylineDecorator === 'function') {
-                            const fleetEmoji = isBike ? '🏍️' : '🚐';
-                            
                             L.polylineDecorator(routeLine, { 
-                                patterns: [
-                                    { 
-                                        offset: '0%', 
-                                        repeat: '70px', 
-                                        symbol: L.Symbol.marker({ 
-                                            rotate: true, 
-                                            markerOptions: { 
-                                                icon: L.divIcon({ 
-                                                    html: `<div style="font-size: 18px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); display: flex; align-items: center; justify-content: center;">${fleetEmoji}</div>`, 
-                                                    className: 'animated-route-flow',
-                                                    iconSize: [24, 24],
-                                                    iconAnchor: [12, 12]
-                                                }) 
-                                            } 
-                                        }) 
-                                    }
-                                ] 
+                                patterns: [{ 
+                                    offset: 30, 
+                                    repeat: 70, 
+                                    symbol: L.Symbol.arrowHead({ 
+                                        pixelSize: 14, 
+                                        polygon: true, 
+                                        pathOptions: { color: '#ffffff', fillOpacity: 1, weight: 0, pane: 'routePane' } 
+                                    }) 
+                                }] 
                             }).addTo(routeLayerGroup);
                         }
                     } catch(err) { console.warn("Polyline Decorator skipped."); }
@@ -1106,20 +1104,27 @@ function bootCommandCenter() {
             if (liveMarkers[data.vehicle_id]) {
                 liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
             } else {
-                const isBike = String(data.vehicle_id).toLowerCase().includes('bike');
+                // 1. Check Shared Registry first, fallback to string matching
+                const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
+                               ? window.fleetRegistry[data.vehicle_id] 
+                               : String(data.vehicle_id).toLowerCase().includes('bike');
+                               
                 const markerColor = isBike ? '#28a745' : '#dc3545';
-                const fleetEmoji = isBike ? '🏍️' : '🚐';
+                const faIcon = isBike ? 'fa-motorcycle' : 'fa-truck';
 
+                // 2. Use pure white FontAwesome icons instead of native emojis
                 const icon = L.divIcon({ 
                     className: 'live-ping', 
                     html: `
                         <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-                            <div id="ping-dot-${data.vehicle_id}" style="background: ${markerColor}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${markerColor}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; font-size: 14px;">
-                                ${fleetEmoji}
+                            <div id="ping-dot-${data.vehicle_id}" 
+                                 style="background: ${markerColor}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${markerColor}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
+                                <i class="fa-solid ${faIcon}" style="color: white; font-size: 11px;"></i>
                             </div>
                             
-                            <div id="ping-badge-${data.vehicle_id}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${markerColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
-                                ${fleetEmoji} ${data.vehicle_id}
+                            <div id="ping-badge-${data.vehicle_id}" 
+                                 style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${markerColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
+                                <i class="fa-solid ${faIcon} mr-1"></i> ${data.vehicle_id}
                             </div>
                         </div>
                     `,
@@ -1143,7 +1148,9 @@ function bootCommandCenter() {
                 console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
             } else {
                 // Restore normal colors if they get back on track
-                const isBike = String(data.vehicle_id).toLowerCase().includes('bike');
+                const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
+                               ? window.fleetRegistry[data.vehicle_id] 
+                               : String(data.vehicle_id).toLowerCase().includes('bike');
                 const markerColor = isBike ? '#28a745' : '#dc3545';
                 const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
                 const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
