@@ -10,10 +10,14 @@
 // v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
 // v2.2.6: Dynamic Emojis - Complete Cartographic Parity across Routes & Live Telemetry.
 // v2.2.7: Fleet Registry Sync - Absolute Parity between Routing Engine and Telemetry Widgets.
-// v2.2.8: Centralized Physics Engine Sync - Frontend UI consumes backend API math directly.
+// v2.2.8: Persistent State & Telemetry Factory Patch - Prevents State-Loss on Recalculation.
 // ==============================================================================
 
-// --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
+// --- 0. PERSISTENT GLOBAL STATE (PATCHED) ---
+window.fleetRegistry = {}; 
+window.activeDeployments = {};
+
+// --- 1. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
 const activeLicenseKey = localStorage.getItem('uyo_license_key');
 
 if (!activeLicenseKey) {
@@ -162,9 +166,6 @@ function bootCommandCenter() {
     let dynamicDeliveries = [];
     let unassignedPinsLayer = L.layerGroup().addTo(map);
 
-    window.activeDeployments = {}; 
-    window.fleetRegistry = {}; // NEW: Synchronizes vehicle types between routes and telemetry
-
     const baseMaps = { 
         "Command Center (Dark)": darkMap, 
         "Clean Street (Light)": lightMap, 
@@ -217,6 +218,27 @@ function bootCommandCenter() {
             }
         }
     };
+
+    // --- PATCHED: Telemetry Factory Pattern ---
+    function createLiveIcon(vId, isBike) {
+        const color = isBike ? '#28a745' : '#dc3545';
+        const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
+        return L.divIcon({ 
+            className: 'live-ping', 
+            html: `
+                <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+                    <div id="ping-dot-${vId}" style="background: ${color}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${color}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
+                        <i class="fa-solid ${icon}" style="color: white; font-size: 11px;"></i>
+                    </div>
+                    <div id="ping-badge-${vId}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
+                        <i class="fa-solid ${icon} mr-1"></i> ${vId}
+                    </div>
+                </div>
+            `,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+    }
 
     async function fetchSpatialLayer(endpoint, layerGroup, styleConfig, targetPane = 'overlayPane') {
         try {
@@ -562,9 +584,7 @@ function bootCommandCenter() {
         routeLayerGroup.clearLayers(); 
         dynamicDeliveries = []; 
         window.activeDeployments = {}; 
-        window.fleetRegistry = {};
-        window.currentPhysicsEngine = null;
-        window.currentTotalStops = 0;
+        // window.fleetRegistry = {}; // PATCH: Removed to keep fleet memory active between clears
         
         if (typeof liveMarkers !== 'undefined') {
             for (let id in liveMarkers) {
@@ -581,7 +601,7 @@ function bootCommandCenter() {
 
         const fleetList = document.getElementById('fleet-list');
         if (fleetList) fleetList.innerHTML = "";
-        if (typeof updateBIMetrics === 'function') updateBIMetrics(null, false); 
+        if (typeof updateBIMetrics === 'function') updateBIMetrics(0, 0); 
         
         const reportContainer = document.getElementById("report-container");
         if (reportContainer) reportContainer.style.display = "none";
@@ -604,16 +624,28 @@ function bootCommandCenter() {
             }
         }
 
-        // Parse Centralized Physics Engine Data
-        const physics = apiResponse.physics_engine;
-        if (!physics) return;
+        // Parse Savings Data
+        const empiricalBaselineMins = apiResponse.empirical_baseline || 0;
+        let totalOptimizedMins = 0;
+        
+        if (apiResponse.routes && apiResponse.routes.length > 0) {
+            apiResponse.routes.forEach(vehicleRoute => {
+                totalOptimizedMins += (vehicleRoute.total_time_mins || 0);
+            });
+        }
+
+        const timeSavedMins = Math.max(0, empiricalBaselineMins - totalOptimizedMins);
+        
+        // Survey-grade CO2 calculation (Assuming 45ml fuel saved per minute optimized)
+        const fuelSavedLiters = timeSavedMins * 0.045;
+        const co2SavedKg = fuelSavedLiters * 2.31;
 
         // Update DOM
         const timeSavedEl = document.getElementById('time-saved-val');
         const co2SavedEl = document.getElementById('co2-saved-val');
         
-        if (timeSavedEl) timeSavedEl.innerText = `${physics.time_saved_mins.toFixed(1)} mins`;
-        if (co2SavedEl) co2SavedEl.innerText = `${physics.co2_prevented_kg.toFixed(2)} kg`;
+        if (timeSavedEl) timeSavedEl.innerText = `${timeSavedMins.toFixed(1)} mins`;
+        if (co2SavedEl) co2SavedEl.innerText = `${co2SavedKg.toFixed(2)} kg`;
     };
 
     window.solveAndDisplay = async function() {
@@ -693,7 +725,7 @@ function bootCommandCenter() {
             routeLayerGroup.clearLayers(); 
             unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
-            window.fleetRegistry = {}; // Clear registry on new solve
+            // PATCH: Removed registry clearing from here to protect shared state
 
             let backendOptimizedMins = 0;
             data.routes.forEach(r => {
@@ -703,8 +735,6 @@ function bootCommandCenter() {
             });
             window.currentMissionMins = backendOptimizedMins;
             window.currentBaselineMins = data.empirical_baseline || 0;
-            window.currentPhysicsEngine = data.physics_engine;
-            window.currentTotalStops = dynamicDeliveries.length;
             
             if (data.routes || data.report_url) {
                 const reportContainer = document.getElementById("report-container");
@@ -862,7 +892,7 @@ function bootCommandCenter() {
                 console.error("Complete Network Failure. Deploying Direct Lines.", e);
             }
         }
-        updateBIMetrics(window.currentPhysicsEngine, true);
+        updateBIMetrics(window.currentMissionMins, window.currentBaselineMins);
     }
 
     let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
@@ -884,23 +914,32 @@ function bootCommandCenter() {
                 lifetimeStats.fuel = data.total_fuel_saved || 0;
                 lifetimeStats.co2 = data.total_co2_saved || 0;
                 lifetimeStats.efficiency = data.avg_efficiency || 0;
-                updateBIMetrics(null, false);
+                updateBIMetrics(0, 0);
             }
         } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
     }
 
-    // --- 100% SURVEY GRADE MATH FIX (Consumes Backend Payload) ---
-    function updateBIMetrics(physicsData, isSession = true) {
+    // --- 100% SURVEY GRADE MATH FIX ---
+    function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
+        // 1. Trust the backend unconditionally. No more client-side smoothing.
+        const manualTimeEst = parseFloat(unoptimizedMins) || 0;
+        const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
+
+        // 2. Unified Survey-Grade Calculus (Identical to Telemetry Widget)
+        const currentFuelSavedLiters = timeSaved * 0.045; // 0.045 Liters saved per optimized minute
+        const currentCo2Saved = currentFuelSavedLiters * 2.31; // 2.31 kg CO2 per Liter
+        
+        // Assuming Premium Motor Spirit (PMS) at ₦1,200 per Liter for the financial engine
+        const currentFuelCostSaved = currentFuelSavedLiters * 1200; 
+        
+        const sessionEfficiency = manualTimeEst > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
+        
         const statFuelEl = document.getElementById('stat-fuel');
         const statEffEl = document.getElementById('stat-efficiency');
         const statCo2El = document.getElementById('stat-co2');
 
-        if (isSession && physicsData) {
+        if (optimizedMins > 0) {
             // --- SESSION STATS (Orange/Yellow) ---
-            const currentFuelCostSaved = physicsData.fuel_saved_liters * 1200; 
-            const manualTimeEst = parseFloat(window.currentBaselineMins) || 0;
-            const sessionEfficiency = manualTimeEst > 0 ? ((physicsData.time_saved_mins / manualTimeEst) * 100) : 0;
-            
             if (statFuelEl) {
                 statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
                 statFuelEl.innerText = `₦${Math.floor(currentFuelCostSaved).toLocaleString()}`;
@@ -913,11 +952,8 @@ function bootCommandCenter() {
             }
             if (statCo2El) {
                 statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-                statCo2El.innerText = `${physicsData.co2_prevented_kg.toFixed(2)} kg`;
+                statCo2El.innerText = `${currentCo2Saved.toFixed(2)} kg`;
                 statCo2El.style.color = "#fbbf24";
-            }
-            if (document.getElementById('co2-bar')) { 
-                document.getElementById('co2-bar').style.width = `${Math.min(sessionEfficiency * 2, 100)}%`; 
             }
         } else {
             // --- LIFETIME STATS (Blue/Green/Red) ---
@@ -936,9 +972,11 @@ function bootCommandCenter() {
                 statCo2El.innerText = `${lifetimeStats.co2.toFixed(1)} kg`;
                 statCo2El.style.color = "#f87171"; 
             }
-            if (document.getElementById('co2-bar')) { 
-                document.getElementById('co2-bar').style.width = `${Math.min(lifetimeStats.efficiency * 2, 100)}%`; 
-            }
+        }
+        
+        if (document.getElementById('co2-bar')) { 
+            const displayEff = optimizedMins > 0 ? sessionEfficiency : lifetimeStats.efficiency;
+            document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
         }
     }
 
@@ -974,26 +1012,13 @@ function bootCommandCenter() {
             const coords = window.activeDeployments[vehicleId];
             if (!coords) throw new Error("Route coordinates missing from memory.");
             
-            // Calculate proportional savings for this specific motorcycle mission
-            const vehicleStops = coords.length > 2 ? coords.length - 2 : 1;
-            const proportion = vehicleStops / Math.max(1, window.currentTotalStops || 1);
-            
-            const propFuel = window.currentPhysicsEngine ? window.currentPhysicsEngine.fuel_saved_liters * proportion : 0;
-            const propCo2 = window.currentPhysicsEngine ? window.currentPhysicsEngine.co2_prevented_kg * proportion : 0;
-            
             const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-license-key': localStorage.getItem('uyo_license_key')
                 },
-                body: JSON.stringify({ 
-                    vehicle_id: vehicleId, 
-                    route_coords: coords,
-                    session_fuel_saved: propFuel,
-                    session_co2_prevented: propCo2,
-                    stops_count: vehicleStops
-                })
+                body: JSON.stringify({ vehicle_id: vehicleId, route_coords: coords })
             });
             
             if (response.ok) {
@@ -1107,29 +1132,11 @@ function bootCommandCenter() {
                                ? window.fleetRegistry[data.vehicle_id] 
                                : String(data.vehicle_id).toLowerCase().includes('bike');
                                
-                const markerColor = isBike ? '#28a745' : '#dc3545';
-                const faIcon = isBike ? 'fa-motorcycle' : 'fa-truck';
-
-                // 2. Use pure white FontAwesome icons instead of native emojis
-                const icon = L.divIcon({ 
-                    className: 'live-ping', 
-                    html: `
-                        <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-                            <div id="ping-dot-${data.vehicle_id}" 
-                                 style="background: ${markerColor}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${markerColor}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
-                                <i class="fa-solid ${faIcon}" style="color: white; font-size: 11px;"></i>
-                            </div>
-                            
-                            <div id="ping-badge-${data.vehicle_id}" 
-                                 style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${markerColor}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
-                                <i class="fa-solid ${faIcon} mr-1"></i> ${data.vehicle_id}
-                            </div>
-                        </div>
-                    `,
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12]
-                });
-                liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {icon: icon, pane: 'poiPane'}).addTo(map);
+                // 2. Use Factory Method
+                liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
+                    icon: createLiveIcon(data.vehicle_id, isBike), 
+                    pane: 'poiPane'
+                }).addTo(map);
             }
             
             // 3. Deviation Alert Override
