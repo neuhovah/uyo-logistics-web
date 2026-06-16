@@ -10,6 +10,7 @@
 // v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
 // v2.2.6: Dynamic Emojis - Complete Cartographic Parity across Routes & Live Telemetry.
 // v2.2.7: Fleet Registry Sync - Absolute Parity between Routing Engine and Telemetry Widgets.
+// v2.2.8: Centralized Physics Engine Sync - Frontend UI consumes backend API math directly.
 // ==============================================================================
 
 // --- 0. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
@@ -49,7 +50,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.7 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.8 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -562,6 +563,8 @@ function bootCommandCenter() {
         dynamicDeliveries = []; 
         window.activeDeployments = {}; 
         window.fleetRegistry = {};
+        window.currentPhysicsEngine = null;
+        window.currentTotalStops = 0;
         
         if (typeof liveMarkers !== 'undefined') {
             for (let id in liveMarkers) {
@@ -578,7 +581,7 @@ function bootCommandCenter() {
 
         const fleetList = document.getElementById('fleet-list');
         if (fleetList) fleetList.innerHTML = "";
-        if (typeof updateBIMetrics === 'function') updateBIMetrics(0, 0); 
+        if (typeof updateBIMetrics === 'function') updateBIMetrics(null, false); 
         
         const reportContainer = document.getElementById("report-container");
         if (reportContainer) reportContainer.style.display = "none";
@@ -601,28 +604,16 @@ function bootCommandCenter() {
             }
         }
 
-        // Parse Savings Data
-        const empiricalBaselineMins = apiResponse.empirical_baseline || 0;
-        let totalOptimizedMins = 0;
-        
-        if (apiResponse.routes && apiResponse.routes.length > 0) {
-            apiResponse.routes.forEach(vehicleRoute => {
-                totalOptimizedMins += (vehicleRoute.total_time_mins || 0);
-            });
-        }
-
-        const timeSavedMins = Math.max(0, empiricalBaselineMins - totalOptimizedMins);
-        
-        // Survey-grade CO2 calculation (Assuming 45ml fuel saved per minute optimized)
-        const fuelSavedLiters = timeSavedMins * 0.045;
-        const co2SavedKg = fuelSavedLiters * 2.31;
+        // Parse Centralized Physics Engine Data
+        const physics = apiResponse.physics_engine;
+        if (!physics) return;
 
         // Update DOM
         const timeSavedEl = document.getElementById('time-saved-val');
         const co2SavedEl = document.getElementById('co2-saved-val');
         
-        if (timeSavedEl) timeSavedEl.innerText = `${timeSavedMins.toFixed(1)} mins`;
-        if (co2SavedEl) co2SavedEl.innerText = `${co2SavedKg.toFixed(2)} kg`;
+        if (timeSavedEl) timeSavedEl.innerText = `${physics.time_saved_mins.toFixed(1)} mins`;
+        if (co2SavedEl) co2SavedEl.innerText = `${physics.co2_prevented_kg.toFixed(2)} kg`;
     };
 
     window.solveAndDisplay = async function() {
@@ -712,6 +703,8 @@ function bootCommandCenter() {
             });
             window.currentMissionMins = backendOptimizedMins;
             window.currentBaselineMins = data.empirical_baseline || 0;
+            window.currentPhysicsEngine = data.physics_engine;
+            window.currentTotalStops = dynamicDeliveries.length;
             
             if (data.routes || data.report_url) {
                 const reportContainer = document.getElementById("report-container");
@@ -869,7 +862,7 @@ function bootCommandCenter() {
                 console.error("Complete Network Failure. Deploying Direct Lines.", e);
             }
         }
-        updateBIMetrics(window.currentMissionMins, window.currentBaselineMins);
+        updateBIMetrics(window.currentPhysicsEngine, true);
     }
 
     let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
@@ -891,32 +884,23 @@ function bootCommandCenter() {
                 lifetimeStats.fuel = data.total_fuel_saved || 0;
                 lifetimeStats.co2 = data.total_co2_saved || 0;
                 lifetimeStats.efficiency = data.avg_efficiency || 0;
-                updateBIMetrics(0, 0);
+                updateBIMetrics(null, false);
             }
         } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
     }
 
-    // --- 100% SURVEY GRADE MATH FIX ---
-    function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
-        // 1. Trust the backend unconditionally. No more client-side smoothing.
-        const manualTimeEst = parseFloat(unoptimizedMins) || 0;
-        const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
-
-        // 2. Unified Survey-Grade Calculus (Identical to Telemetry Widget)
-        const currentFuelSavedLiters = timeSaved * 0.045; // 0.045 Liters saved per optimized minute
-        const currentCo2Saved = currentFuelSavedLiters * 2.31; // 2.31 kg CO2 per Liter
-        
-        // Assuming Premium Motor Spirit (PMS) at ₦1,200 per Liter for the financial engine
-        const currentFuelCostSaved = currentFuelSavedLiters * 1200; 
-        
-        const sessionEfficiency = manualTimeEst > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
-        
+    // --- 100% SURVEY GRADE MATH FIX (Consumes Backend Payload) ---
+    function updateBIMetrics(physicsData, isSession = true) {
         const statFuelEl = document.getElementById('stat-fuel');
         const statEffEl = document.getElementById('stat-efficiency');
         const statCo2El = document.getElementById('stat-co2');
 
-        if (optimizedMins > 0) {
+        if (isSession && physicsData) {
             // --- SESSION STATS (Orange/Yellow) ---
+            const currentFuelCostSaved = physicsData.fuel_saved_liters * 1200; 
+            const manualTimeEst = parseFloat(window.currentBaselineMins) || 0;
+            const sessionEfficiency = manualTimeEst > 0 ? ((physicsData.time_saved_mins / manualTimeEst) * 100) : 0;
+            
             if (statFuelEl) {
                 statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
                 statFuelEl.innerText = `₦${Math.floor(currentFuelCostSaved).toLocaleString()}`;
@@ -929,8 +913,11 @@ function bootCommandCenter() {
             }
             if (statCo2El) {
                 statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-                statCo2El.innerText = `${currentCo2Saved.toFixed(2)} kg`;
+                statCo2El.innerText = `${physicsData.co2_prevented_kg.toFixed(2)} kg`;
                 statCo2El.style.color = "#fbbf24";
+            }
+            if (document.getElementById('co2-bar')) { 
+                document.getElementById('co2-bar').style.width = `${Math.min(sessionEfficiency * 2, 100)}%`; 
             }
         } else {
             // --- LIFETIME STATS (Blue/Green/Red) ---
@@ -949,11 +936,9 @@ function bootCommandCenter() {
                 statCo2El.innerText = `${lifetimeStats.co2.toFixed(1)} kg`;
                 statCo2El.style.color = "#f87171"; 
             }
-        }
-        
-        if (document.getElementById('co2-bar')) { 
-            const displayEff = optimizedMins > 0 ? sessionEfficiency : lifetimeStats.efficiency;
-            document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
+            if (document.getElementById('co2-bar')) { 
+                document.getElementById('co2-bar').style.width = `${Math.min(lifetimeStats.efficiency * 2, 100)}%`; 
+            }
         }
     }
 
@@ -989,13 +974,26 @@ function bootCommandCenter() {
             const coords = window.activeDeployments[vehicleId];
             if (!coords) throw new Error("Route coordinates missing from memory.");
             
+            // Calculate proportional savings for this specific motorcycle mission
+            const vehicleStops = coords.length > 2 ? coords.length - 2 : 1;
+            const proportion = vehicleStops / Math.max(1, window.currentTotalStops || 1);
+            
+            const propFuel = window.currentPhysicsEngine ? window.currentPhysicsEngine.fuel_saved_liters * proportion : 0;
+            const propCo2 = window.currentPhysicsEngine ? window.currentPhysicsEngine.co2_prevented_kg * proportion : 0;
+            
             const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-license-key': localStorage.getItem('uyo_license_key')
                 },
-                body: JSON.stringify({ vehicle_id: vehicleId, route_coords: coords })
+                body: JSON.stringify({ 
+                    vehicle_id: vehicleId, 
+                    route_coords: coords,
+                    session_fuel_saved: propFuel,
+                    session_co2_prevented: propCo2,
+                    stops_count: vehicleStops
+                })
             });
             
             if (response.ok) {
