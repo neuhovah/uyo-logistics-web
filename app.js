@@ -12,11 +12,14 @@
 // v2.2.7: Fleet Registry Sync - Absolute Parity between Routing Engine and Telemetry Widgets.
 // v2.2.8: Persistent State & Telemetry Factory Patch - Prevents State-Loss on Recalculation.
 // v2.2.9: Dispatch Payload Sync & Socket Reconnection Fixes - Ensures 100% accurate lifetime metric logging.
+// v2.3.0: Centralized Physics Engine Sync & WS Race Condition Patch.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED) ---
 window.fleetRegistry = {}; 
 window.activeDeployments = {};
+window.activeDeploymentsMins = {}; 
+window.currentPhysicsEngine = {};
 
 // --- 1. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
 const activeLicenseKey = localStorage.getItem('uyo_license_key');
@@ -55,7 +58,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.9 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.0 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -585,6 +588,8 @@ function bootCommandCenter() {
         routeLayerGroup.clearLayers(); 
         dynamicDeliveries = []; 
         window.activeDeployments = {}; 
+        window.activeDeploymentsMins = {};
+        window.currentPhysicsEngine = {};
         // window.fleetRegistry = {}; // PATCH: Removed to keep fleet memory active between clears
         
         if (typeof liveMarkers !== 'undefined') {
@@ -602,7 +607,7 @@ function bootCommandCenter() {
 
         const fleetList = document.getElementById('fleet-list');
         if (fleetList) fleetList.innerHTML = "";
-        if (typeof updateBIMetrics === 'function') updateBIMetrics(0, 0); 
+        if (typeof updateBIMetrics === 'function') updateBIMetrics(false); 
         
         const reportContainer = document.getElementById("report-container");
         if (reportContainer) reportContainer.style.display = "none";
@@ -625,7 +630,9 @@ function bootCommandCenter() {
             }
         }
 
-        // Parse Savings Data
+        // Consume backend physics_engine, entirely bypassing frontend math
+        const pe = apiResponse.physics_engine || { fuel_saved: 0, co2_saved: 0, efficiency: 0 };
+        
         const empiricalBaselineMins = apiResponse.empirical_baseline || 0;
         let totalOptimizedMins = 0;
         
@@ -637,16 +644,12 @@ function bootCommandCenter() {
 
         const timeSavedMins = Math.max(0, empiricalBaselineMins - totalOptimizedMins);
         
-        // Survey-grade CO2 calculation (Assuming 45ml fuel saved per minute optimized)
-        const fuelSavedLiters = timeSavedMins * 0.045;
-        const co2SavedKg = fuelSavedLiters * 2.31;
-
         // Update DOM
         const timeSavedEl = document.getElementById('time-saved-val');
         const co2SavedEl = document.getElementById('co2-saved-val');
         
         if (timeSavedEl) timeSavedEl.innerText = `${timeSavedMins.toFixed(1)} mins`;
-        if (co2SavedEl) co2SavedEl.innerText = `${co2SavedKg.toFixed(2)} kg`;
+        if (co2SavedEl) co2SavedEl.innerText = `${pe.co2_saved.toFixed(2)} kg`;
     };
 
     window.solveAndDisplay = async function() {
@@ -720,12 +723,16 @@ function bootCommandCenter() {
             
             window.latestOptimizationResult = data;
             
+            // Sync physics_engine to global state for proportional dispatch
+            window.currentPhysicsEngine = data.physics_engine || { fuel_saved: 0, co2_saved: 0, efficiency: 0 };
+            
             // Trigger Telemetry Widget
             window.updateTelemetryUI(data);
             
             routeLayerGroup.clearLayers(); 
             unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
+            window.activeDeploymentsMins = {};
             // PATCH: Removed registry clearing from here to protect shared state
 
             let backendOptimizedMins = 0;
@@ -844,6 +851,7 @@ function bootCommandCenter() {
 
                     const routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
                     window.activeDeployments[vId] = routeCoords;
+                    window.activeDeploymentsMins[vId] = parseFloat(durationMin); // Save for proportional math
 
                     const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(routeLayerGroup);
                     
@@ -893,15 +901,18 @@ function bootCommandCenter() {
                 console.error("Complete Network Failure. Deploying Direct Lines.", e);
             }
         }
-        updateBIMetrics(window.currentMissionMins, window.currentBaselineMins);
+        updateBIMetrics(true);
     }
 
     let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
 
     async function fetchLifetimeMetrics() {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/vrp/history`, {
-                headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
+            const response = await fetch(`${API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
+                headers: { 
+                    'x-license-key': localStorage.getItem('uyo_license_key'),
+                    'Cache-Control': 'no-cache'
+                }
             });
             
             if (response.status === 401) {
@@ -915,45 +926,33 @@ function bootCommandCenter() {
                 lifetimeStats.fuel = data.total_fuel_saved || 0;
                 lifetimeStats.co2 = data.total_co2_saved || 0;
                 lifetimeStats.efficiency = data.avg_efficiency || 0;
-                updateBIMetrics(0, 0);
+                updateBIMetrics(false);
             }
         } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
     }
 
     // --- 100% SURVEY GRADE MATH FIX ---
-    function updateBIMetrics(optimizedMins, unoptimizedMins = 0) {
-        // 1. Trust the backend unconditionally. No more client-side smoothing.
-        const manualTimeEst = parseFloat(unoptimizedMins) || 0;
-        const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
-
-        // 2. Unified Survey-Grade Calculus (Identical to Telemetry Widget)
-        const currentFuelSavedLiters = timeSaved * 0.045; // 0.045 Liters saved per optimized minute
-        const currentCo2Saved = currentFuelSavedLiters * 2.31; // 2.31 kg CO2 per Liter
-        
-        // Assuming Premium Motor Spirit (PMS) at ₦1,200 per Liter for the financial engine
-        const currentFuelCostSaved = currentFuelSavedLiters * 1200; 
-        
-        const sessionEfficiency = manualTimeEst > 0 ? ((timeSaved / manualTimeEst) * 100) : 0;
-        
+    function updateBIMetrics(isSession = false) {
         const statFuelEl = document.getElementById('stat-fuel');
         const statEffEl = document.getElementById('stat-efficiency');
         const statCo2El = document.getElementById('stat-co2');
 
-        if (optimizedMins > 0) {
-            // --- SESSION STATS (Orange/Yellow) ---
+        if (isSession) {
+            const pe = window.currentPhysicsEngine || { fuel_saved: 0, efficiency: 0, co2_saved: 0 };
+            
             if (statFuelEl) {
                 statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-                statFuelEl.innerText = `₦${Math.floor(currentFuelCostSaved).toLocaleString()}`;
+                statFuelEl.innerText = `₦${Math.floor(pe.fuel_saved).toLocaleString()}`;
                 statFuelEl.style.color = "#fbbf24"; 
             }
             if (statEffEl) {
                 statEffEl.previousElementSibling.innerText = "Session Efficiency";
-                statEffEl.innerText = `${sessionEfficiency.toFixed(1)}%`;
+                statEffEl.innerText = `${pe.efficiency.toFixed(1)}%`;
                 statEffEl.style.color = "#fbbf24";
             }
             if (statCo2El) {
                 statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-                statCo2El.innerText = `${currentCo2Saved.toFixed(2)} kg`;
+                statCo2El.innerText = `${pe.co2_saved.toFixed(2)} kg`;
                 statCo2El.style.color = "#fbbf24";
             }
         } else {
@@ -976,7 +975,7 @@ function bootCommandCenter() {
         }
         
         if (document.getElementById('co2-bar')) { 
-            const displayEff = optimizedMins > 0 ? sessionEfficiency : lifetimeStats.efficiency;
+            const displayEff = isSession ? (window.currentPhysicsEngine?.efficiency || 0) : lifetimeStats.efficiency;
             document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
         }
     }
@@ -1014,17 +1013,19 @@ function bootCommandCenter() {
             if (!coords) throw new Error("Route coordinates missing from memory.");
             
             // --- PATCH 1: Transmit Proportional Environmental Savings ---
-            const manualTimeEst = window.currentBaselineMins || 0;
-            const optimizedMins = window.currentMissionMins || 0;
-            const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
+            let totalOsrmMins = 0;
+            for (let key in window.activeDeploymentsMins) {
+                totalOsrmMins += window.activeDeploymentsMins[key];
+            }
+            const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
+            const pe = window.currentPhysicsEngine || { fuel_saved: 0, co2_saved: 0, efficiency: 0 };
             
-            const fuelSavedLiters = timeSaved * 0.045;
             const payload = {
                 vehicle_id: vehicleId,
                 route_coords: coords,
-                fuel_saved: fuelSavedLiters * 1200, 
-                co2_saved: fuelSavedLiters * 2.31,
-                efficiency: manualTimeEst > 0 ? ((timeSaved / manualTimeEst) * 100) : 0
+                fuel_saved: pe.fuel_saved * proportion, 
+                co2_saved: pe.co2_saved * proportion,
+                efficiency: pe.efficiency 
             };
             
             const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
@@ -1046,7 +1047,7 @@ function bootCommandCenter() {
                     map.addLayer(routeLayerGroup); 
                 } 
                 
-                if (!liveFleetSocket || liveFleetSocket.readyState !== WebSocket.OPEN) {
+                if (!liveFleetSocket || liveFleetSocket.readyState === WebSocket.CLOSED || liveFleetSocket.readyState === WebSocket.CLOSING) {
                     console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
                     connectLiveFleet(); 
                 }
