@@ -13,6 +13,7 @@
 // v2.2.8: Persistent State & Telemetry Factory Patch - Prevents State-Loss on Recalculation.
 // v2.2.9: Dispatch Payload Sync & Socket Reconnection Fixes - Ensures 100% accurate lifetime metric logging.
 // v2.3.0: Centralized Physics Engine Sync & WS Race Condition Patch.
+// v2.3.1: Null-Safety & Defensive Data Parsing Patch (Resolves .toFixed undefined TypeErrors).
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED) ---
@@ -58,7 +59,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.3.0 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.1 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -630,15 +631,20 @@ function bootCommandCenter() {
             }
         }
 
-        // Consume backend physics_engine, entirely bypassing frontend math
-        const pe = apiResponse.physics_engine || { fuel_saved: 0, co2_saved: 0, efficiency: 0 };
+        // Consume backend physics_engine, entirely bypassing frontend math (PATCHED for undefined properties)
+        const peRaw = apiResponse.physics_engine || {};
+        const pe = {
+            fuel_saved: Number(peRaw.fuel_saved) || 0,
+            co2_saved: Number(peRaw.co2_saved) || 0,
+            efficiency: Number(peRaw.efficiency) || 0
+        };
         
-        const empiricalBaselineMins = apiResponse.empirical_baseline || 0;
+        const empiricalBaselineMins = Number(apiResponse.empirical_baseline) || 0;
         let totalOptimizedMins = 0;
         
         if (apiResponse.routes && apiResponse.routes.length > 0) {
             apiResponse.routes.forEach(vehicleRoute => {
-                totalOptimizedMins += (vehicleRoute.total_time_mins || 0);
+                totalOptimizedMins += (Number(vehicleRoute.total_time_mins) || 0);
             });
         }
 
@@ -723,8 +729,13 @@ function bootCommandCenter() {
             
             window.latestOptimizationResult = data;
             
-            // Sync physics_engine to global state for proportional dispatch
-            window.currentPhysicsEngine = data.physics_engine || { fuel_saved: 0, co2_saved: 0, efficiency: 0 };
+            // Sync physics_engine to global state for proportional dispatch (PATCHED)
+            const peRaw = data.physics_engine || {};
+            window.currentPhysicsEngine = {
+                fuel_saved: Number(peRaw.fuel_saved) || 0,
+                co2_saved: Number(peRaw.co2_saved) || 0,
+                efficiency: Number(peRaw.efficiency) || 0
+            };
             
             // Trigger Telemetry Widget
             window.updateTelemetryUI(data);
@@ -938,7 +949,12 @@ function bootCommandCenter() {
         const statCo2El = document.getElementById('stat-co2');
 
         if (isSession) {
-            const pe = window.currentPhysicsEngine || { fuel_saved: 0, efficiency: 0, co2_saved: 0 };
+            const peRaw = window.currentPhysicsEngine || {};
+            const pe = {
+                fuel_saved: Number(peRaw.fuel_saved) || 0,
+                co2_saved: Number(peRaw.co2_saved) || 0,
+                efficiency: Number(peRaw.efficiency) || 0
+            };
             
             if (statFuelEl) {
                 statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
@@ -1018,7 +1034,12 @@ function bootCommandCenter() {
                 totalOsrmMins += window.activeDeploymentsMins[key];
             }
             const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
-            const pe = window.currentPhysicsEngine || { fuel_saved: 0, co2_saved: 0, efficiency: 0 };
+            const peRaw = window.currentPhysicsEngine || {};
+            const pe = {
+                fuel_saved: Number(peRaw.fuel_saved) || 0,
+                co2_saved: Number(peRaw.co2_saved) || 0,
+                efficiency: Number(peRaw.efficiency) || 0
+            };
             
             const payload = {
                 vehicle_id: vehicleId,
