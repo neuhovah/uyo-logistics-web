@@ -11,6 +11,7 @@
 // v2.2.6: Dynamic Emojis - Complete Cartographic Parity across Routes & Live Telemetry.
 // v2.2.7: Fleet Registry Sync - Absolute Parity between Routing Engine and Telemetry Widgets.
 // v2.2.8: Persistent State & Telemetry Factory Patch - Prevents State-Loss on Recalculation.
+// v2.2.9: Dispatch Payload Sync & Socket Reconnection Fixes - Ensures 100% accurate lifetime metric logging.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED) ---
@@ -54,7 +55,7 @@ function bootCommandCenter() {
     const API_BASE_URL = "https://api.uyologistics.com";
     const WS_BASE_URL = "wss://api.uyologistics.com";
 
-    console.log("🚀 Uyo Logistics Engine v2.2.8 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.2.9 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -1012,13 +1013,27 @@ function bootCommandCenter() {
             const coords = window.activeDeployments[vehicleId];
             if (!coords) throw new Error("Route coordinates missing from memory.");
             
+            // --- PATCH 1: Transmit Proportional Environmental Savings ---
+            const manualTimeEst = window.currentBaselineMins || 0;
+            const optimizedMins = window.currentMissionMins || 0;
+            const timeSaved = Math.max(0, manualTimeEst - optimizedMins);
+            
+            const fuelSavedLiters = timeSaved * 0.045;
+            const payload = {
+                vehicle_id: vehicleId,
+                route_coords: coords,
+                fuel_saved: fuelSavedLiters * 1200, 
+                co2_saved: fuelSavedLiters * 2.31,
+                efficiency: manualTimeEst > 0 ? ((timeSaved / manualTimeEst) * 100) : 0
+            };
+            
             const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-license-key': localStorage.getItem('uyo_license_key')
                 },
-                body: JSON.stringify({ vehicle_id: vehicleId, route_coords: coords })
+                body: JSON.stringify(payload)
             });
             
             if (response.ok) {
@@ -1026,9 +1041,13 @@ function bootCommandCenter() {
                 setTimeout(fetchLifetimeMetrics, 1500);
                 unassignedPinsLayer.clearLayers();
 
+                // --- PATCH 2: Hardened WebSocket Reconnection ---
                 if (!map.hasLayer(routeLayerGroup)) {
                     map.addLayer(routeLayerGroup); 
-                } else if (!liveFleetSocket) {
+                } 
+                
+                if (!liveFleetSocket || liveFleetSocket.readyState !== WebSocket.OPEN) {
+                    console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
                     connectLiveFleet(); 
                 }
 
