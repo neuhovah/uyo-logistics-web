@@ -14,13 +14,28 @@
 // v2.2.9: Dispatch Payload Sync & Socket Reconnection Fixes - Ensures 100% accurate lifetime metric logging.
 // v2.3.0: Centralized Physics Engine Sync & WS Race Condition Patch.
 // v2.3.1: Null-Safety & Defensive Data Parsing Patch (Resolves .toFixed undefined TypeErrors).
+// v2.3.2: 100% Survey-Grade Scope Extraction (Decoupled Global Handlers from Bootloader).
 // ==============================================================================
 
-// --- 0. PERSISTENT GLOBAL STATE (PATCHED) ---
+// --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
+window.API_BASE_URL = "https://api.uyologistics.com";
+window.WS_BASE_URL = "wss://api.uyologistics.com";
+
 window.fleetRegistry = {}; 
 window.activeDeployments = {};
 window.activeDeploymentsMins = {}; 
 window.currentPhysicsEngine = {};
+window.lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
+
+window.depotLocation = { lat: 5.0333, lon: 7.9266 };
+window.dynamicDeliveries = [];
+window.liveMarkers = {};
+
+window.map = null;
+window.routeLayerGroup = null;
+window.unassignedPinsLayer = null;
+window.liveFleetSocket = null;
+
 
 // --- 1. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
 const activeLicenseKey = localStorage.getItem('uyo_license_key');
@@ -56,10 +71,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    const API_BASE_URL = "https://api.uyologistics.com";
-    const WS_BASE_URL = "wss://api.uyologistics.com";
-
-    console.log("🚀 Uyo Logistics Engine v2.3.1 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.2 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -86,10 +98,10 @@ function bootCommandCenter() {
         maxNativeZoom: 20
     });
 
-    const map = L.map('map', { center: uyoCenter, zoom: 13, maxZoom: 22, layers: [darkMap], zoomControl: false });
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    window.map = L.map('map', { center: uyoCenter, zoom: 13, maxZoom: 22, layers: [darkMap], zoomControl: false });
+    L.control.zoom({ position: 'bottomright' }).addTo(window.map);
 
-    L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
+    L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(window.map);
 
     const mapLegend = L.control({ position: 'bottomleft' });
     mapLegend.onAdd = function () {
@@ -155,21 +167,20 @@ function bootCommandCenter() {
         }, 100);
         return div;
     };
-    mapLegend.addTo(map);
+    mapLegend.addTo(window.map);
 
-    map.createPane('hotspotPane');       map.getPane('hotspotPane').style.zIndex = 300;
-    map.createPane('accessibilityPane'); map.getPane('accessibilityPane').style.zIndex = 310;
-    map.createPane('routePane');         map.getPane('routePane').style.zIndex = 400; 
-    map.createPane('poiPane');           map.getPane('poiPane').style.zIndex = 600; 
+    window.map.createPane('hotspotPane');        window.map.getPane('hotspotPane').style.zIndex = 300;
+    window.map.createPane('accessibilityPane');  window.map.getPane('accessibilityPane').style.zIndex = 310;
+    window.map.createPane('routePane');          window.map.getPane('routePane').style.zIndex = 400; 
+    window.map.createPane('poiPane');            window.map.getPane('poiPane').style.zIndex = 600; 
 
-    let routeLayerGroup = L.layerGroup().addTo(map); 
+    window.routeLayerGroup = L.layerGroup().addTo(window.map); 
     const hotspotLayer = L.layerGroup();
     const boundaryLayer = L.layerGroup();
     const poiLayer = L.layerGroup();
     const accessibilityLayer = L.layerGroup();
 
-    let dynamicDeliveries = [];
-    let unassignedPinsLayer = L.layerGroup().addTo(map);
+    window.unassignedPinsLayer = L.layerGroup().addTo(window.map);
 
     const baseMaps = { 
         "Command Center (Dark)": darkMap, 
@@ -177,7 +188,7 @@ function bootCommandCenter() {
         "Satellite View": satellite 
     };
     const overlayMaps = {
-        "<b>Live Operations</b>": routeLayerGroup,
+        "<b>Live Operations</b>": window.routeLayerGroup,
         "Demand Hotspots": hotspotLayer,
         "City Boundaries": boundaryLayer,
         "Points of Interest": poiLayer,
@@ -188,7 +199,7 @@ function bootCommandCenter() {
     L.control.layers(baseMaps, overlayMaps, { 
         position: 'topright', 
         collapsed: isMobile 
-    }).addTo(map);
+    }).addTo(window.map);
 
     const layerStyles = {
         boundaries: { color: "#ef4444", weight: 3, fillOpacity: 0.05, dashArray: '5, 10', interactive: false },
@@ -224,31 +235,10 @@ function bootCommandCenter() {
         }
     };
 
-    // --- PATCHED: Telemetry Factory Pattern ---
-    function createLiveIcon(vId, isBike) {
-        const color = isBike ? '#28a745' : '#dc3545';
-        const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
-        return L.divIcon({ 
-            className: 'live-ping', 
-            html: `
-                <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-                    <div id="ping-dot-${vId}" style="background: ${color}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${color}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
-                        <i class="fa-solid ${icon}" style="color: white; font-size: 11px;"></i>
-                    </div>
-                    <div id="ping-badge-${vId}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
-                        <i class="fa-solid ${icon} mr-1"></i> ${vId}
-                    </div>
-                </div>
-            `,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12]
-        });
-    }
-
     async function fetchSpatialLayer(endpoint, layerGroup, styleConfig, targetPane = 'overlayPane') {
         try {
             const currentKey = localStorage.getItem('uyo_license_key');
-            const response = await fetch(`${API_BASE_URL}/api/layers${endpoint}`, {
+            const response = await fetch(`${window.API_BASE_URL}/api/layers${endpoint}`, {
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json', 'x-license-key': currentKey }
             });
@@ -306,28 +296,27 @@ function bootCommandCenter() {
     }
     loadAllDatabaseLayers();
 
-    let depotLocation = { lat: 5.0333, lon: 7.9266 };
     const depotIcon = L.divIcon({ className: 'depot', html: `<div style="background-color: #ffffff; border: 4px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; box-shadow: 0 0 20px rgba(59, 130, 246, 1);"></div>` });
-    const depotMarker = L.marker([depotLocation.lat, depotLocation.lon], { icon: depotIcon, draggable: true, pane: 'poiPane' }).addTo(map);
+    const depotMarker = L.marker([window.depotLocation.lat, window.depotLocation.lon], { icon: depotIcon, draggable: true, pane: 'poiPane' }).addTo(window.map);
 
     depotMarker.on('dragend', function() {
         const position = depotMarker.getLatLng();
-        depotLocation.lat = parseFloat(position.lat.toFixed(6));
-        depotLocation.lon = parseFloat(position.lng.toFixed(6));
+        window.depotLocation.lat = parseFloat(position.lat.toFixed(6));
+        window.depotLocation.lon = parseFloat(position.lng.toFixed(6));
     });
 
     window.removePin = function(dropId) {
-        dynamicDeliveries = dynamicDeliveries.filter(d => d.id !== dropId);
-        unassignedPinsLayer.eachLayer(function(layer) {
+        window.dynamicDeliveries = window.dynamicDeliveries.filter(d => d.id !== dropId);
+        window.unassignedPinsLayer.eachLayer(function(layer) {
             if (layer.options.dropId === dropId) {
-                unassignedPinsLayer.removeLayer(layer);
+                window.unassignedPinsLayer.removeLayer(layer);
             }
         });
         console.log(`🗑️ Removed Drop: ${dropId}`);
     };
 
     // --- PARCEL WEIGHT INTERCEPTION ON MAP CLICK ---
-    map.on('click', function(e) {
+    window.map.on('click', function(e) {
         let isInside = false;
         if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
             isInside = boundaryLayer.getLayers()[0].getBounds().contains(e.latlng);
@@ -350,13 +339,13 @@ function bootCommandCenter() {
         const cleanLng = parseFloat(e.latlng.lng.toFixed(6));
         
         const dropId = "Drop_" + Math.floor(Math.random() * 10000);
-        dynamicDeliveries.push({ id: dropId, lat: cleanLat, lon: cleanLng, weight: parsedWeight });
+        window.dynamicDeliveries.push({ id: dropId, lat: cleanLat, lon: cleanLng, weight: parsedWeight });
         
         const popupContent = `
             <div style="text-align: center;">
                 <b style="color: #1f2937;">Order: ${dropId}</b><br>
                 <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
-                <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                <button onclick="window.removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                     <i class="fa-solid fa-trash"></i> Remove Drop
                 </button>
             </div>
@@ -366,7 +355,7 @@ function bootCommandCenter() {
             dropId: dropId,
             icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
             pane: 'poiPane' 
-        }).addTo(unassignedPinsLayer).bindPopup(popupContent);
+        }).addTo(window.unassignedPinsLayer).bindPopup(popupContent);
     });
 
     const searchInput = document.getElementById('custom-search');
@@ -401,7 +390,7 @@ function bootCommandCenter() {
                 return searchContainer;
             }
         });
-        map.addControl(new NativeSearchControl());
+        window.map.addControl(new NativeSearchControl());
     }
 
     window.executeSearch = async function() {
@@ -533,7 +522,7 @@ function bootCommandCenter() {
                     }
                     
                     const dropId = "Search_" + Math.floor(Math.random() * 10000);
-                    dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: parsedWeight });
+                    window.dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: parsedWeight });
 
                     const popupContent = `
                         <div style="text-align: center;">
@@ -541,7 +530,7 @@ function bootCommandCenter() {
                             <span style="font-size: 11px; font-weight: bold;">${item.name}</span><br>
                             <span style="font-size: 10px; color: #4b5563;">${item.address}</span><br>
                             <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
-                            <button onclick="removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                            <button onclick="window.removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                                 <i class="fa-solid fa-trash"></i> Remove Drop
                             </button>
                         </div>
@@ -551,9 +540,9 @@ function bootCommandCenter() {
                         dropId: dropId,
                         icon: L.divIcon({ className: 'unassigned', html: `<div style="background-color: #ffffff; border: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; box-shadow: 0 0 10px rgba(255,255,255,0.5);"></div>` }), 
                         pane: 'poiPane' 
-                    }).addTo(unassignedPinsLayer).bindPopup(popupContent).openPopup();
+                    }).addTo(window.unassignedPinsLayer).bindPopup(popupContent).openPopup();
                     
-                    map.flyTo([item.lat, item.lng], 16, { duration: 1.5 });
+                    window.map.flyTo([item.lat, item.lng], 16, { duration: 1.5 });
                 };
                 dropdownMenu.appendChild(opt);
             });
@@ -585,30 +574,29 @@ function bootCommandCenter() {
     }
 
     window.clearUnassignedPins = function() { 
-        unassignedPinsLayer.clearLayers(); 
-        routeLayerGroup.clearLayers(); 
-        dynamicDeliveries = []; 
+        window.unassignedPinsLayer.clearLayers(); 
+        window.routeLayerGroup.clearLayers(); 
+        window.dynamicDeliveries = []; 
         window.activeDeployments = {}; 
         window.activeDeploymentsMins = {};
         window.currentPhysicsEngine = {};
-        // window.fleetRegistry = {}; // PATCH: Removed to keep fleet memory active between clears
         
-        if (typeof liveMarkers !== 'undefined') {
-            for (let id in liveMarkers) {
-                if (map.hasLayer(liveMarkers[id])) map.removeLayer(liveMarkers[id]);
+        if (typeof window.liveMarkers !== 'undefined') {
+            for (let id in window.liveMarkers) {
+                if (window.map.hasLayer(window.liveMarkers[id])) window.map.removeLayer(window.liveMarkers[id]);
             }
-            liveMarkers = {};
+            window.liveMarkers = {};
         }
 
-        if (typeof liveFleetSocket !== 'undefined' && liveFleetSocket) {
-            liveFleetSocket.close();
-            liveFleetSocket = null;
+        if (typeof window.liveFleetSocket !== 'undefined' && window.liveFleetSocket) {
+            window.liveFleetSocket.close();
+            window.liveFleetSocket = null;
             console.log("📡 Live Fleet Telemetry: Connection reset by 'Clear Pins'");
         }
 
         const fleetList = document.getElementById('fleet-list');
         if (fleetList) fleetList.innerHTML = "";
-        if (typeof updateBIMetrics === 'function') updateBIMetrics(false); 
+        if (typeof window.updateBIMetrics === 'function') window.updateBIMetrics(false); 
         
         const reportContainer = document.getElementById("report-container");
         if (reportContainer) reportContainer.style.display = "none";
@@ -631,7 +619,7 @@ function bootCommandCenter() {
             }
         }
 
-        // Consume backend physics_engine, entirely bypassing frontend math (PATCHED for undefined properties)
+        // Consume backend physics_engine, entirely bypassing frontend math
         const peRaw = apiResponse.physics_engine || {};
         const pe = {
             fuel_saved: Number(peRaw.fuel_saved) || 0,
@@ -659,7 +647,7 @@ function bootCommandCenter() {
     };
 
     window.solveAndDisplay = async function() {
-        if (dynamicDeliveries.length === 0) { alert("Drop pins or search for locations first!"); return; }
+        if (window.dynamicDeliveries.length === 0) { alert("Drop pins or search for locations first!"); return; }
         
         const currentLicenseKey = localStorage.getItem('uyo_license_key');
         if (!currentLicenseKey) {
@@ -690,13 +678,13 @@ function bootCommandCenter() {
             btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Optimizing Engine...`; 
             btn.disabled = true;
 
-            const response = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, { 
+            const response = await fetch(`${window.API_BASE_URL}/api/vrp/solve-dynamic`, { 
                 method: 'POST', 
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-license-key': currentLicenseKey
                 }, 
-                body: JSON.stringify({ depot: depotLocation, deliveries: dynamicDeliveries, fleet: activeFleet }),
+                body: JSON.stringify({ depot: window.depotLocation, deliveries: window.dynamicDeliveries, fleet: activeFleet }),
                 signal: controller.signal
             });
             
@@ -711,7 +699,7 @@ function bootCommandCenter() {
 
                 if (response.status === 402) {
                     if(confirm(`💳 PAYMENT REQUIRED:\n\n${errorMsg}\n\nWould you like to renew your subscription now?`)) {
-                        initiateSubscriptionRenewal();
+                        window.initiateSubscriptionRenewal();
                     }
                 } else if (response.status === 401) {
                     alert(`❌ ACCESS DENIED:\n\n${errorMsg}`);
@@ -740,11 +728,10 @@ function bootCommandCenter() {
             // Trigger Telemetry Widget
             window.updateTelemetryUI(data);
             
-            routeLayerGroup.clearLayers(); 
-            unassignedPinsLayer.clearLayers();
+            window.routeLayerGroup.clearLayers(); 
+            window.unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
             window.activeDeploymentsMins = {};
-            // PATCH: Removed registry clearing from here to protect shared state
 
             let backendOptimizedMins = 0;
             data.routes.forEach(r => {
@@ -777,7 +764,7 @@ function bootCommandCenter() {
                 }
             }
 
-            await renderRoutes(data.routes, { depot: depotLocation, deliveries: dynamicDeliveries });
+            await renderRoutes(data.routes, { depot: window.depotLocation, deliveries: window.dynamicDeliveries });
 
         } catch (error) { 
             if (error.name === 'AbortError') {
@@ -864,14 +851,14 @@ function bootCommandCenter() {
                     window.activeDeployments[vId] = routeCoords;
                     window.activeDeploymentsMins[vId] = parseFloat(durationMin); // Save for proportional math
 
-                    const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(routeLayerGroup);
+                    const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(window.routeLayerGroup);
                     
                     let sequenceCounter = 1;
                     r.route.forEach((node, idx) => {
                         if (idx === 0 || idx === r.route.length - 1) return;
                         const coords = locDict[node];
                         if (coords) {
-                            L.marker(coords, { icon: L.divIcon({ className: 'seq', html: `<div style="background: white; color: ${color}; border: 2.5px solid ${color}; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${sequenceCounter}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), pane: 'poiPane' }).addTo(routeLayerGroup);
+                            L.marker(coords, { icon: L.divIcon({ className: 'seq', html: `<div style="background: white; color: ${color}; border: 2.5px solid ${color}; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${sequenceCounter}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), pane: 'poiPane' }).addTo(window.routeLayerGroup);
                             sequenceCounter++;
                         }
                     });
@@ -888,7 +875,7 @@ function bootCommandCenter() {
                                         pathOptions: { color: '#ffffff', fillOpacity: 1, weight: 0, pane: 'routePane' } 
                                     }) 
                                 }] 
-                            }).addTo(routeLayerGroup);
+                            }).addTo(window.routeLayerGroup);
                         }
                     } catch(err) { console.warn("Polyline Decorator skipped."); }
 
@@ -899,10 +886,10 @@ function bootCommandCenter() {
                                 <span class="text-[10px] font-bold bg-gray-700 px-2 py-1 rounded text-blue-400">${durationMin} MIN</span>
                             </div>
                             <p class="text-white font-mono text-sm mb-3">${distanceKm} KM | ${dropsCount} Drops</p>
-                            <button onclick="deployMission('${vId}', '${gmapsUrl}')" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
+                            <button onclick="window.deployMission('${vId}', '${gmapsUrl}')" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
                                 Deploy Live Mission
                             </button>
-                            <button id="recalc-btn-${vId}" onclick="triggerTrafficRecalculate('${vId}')" class="w-full mt-2 py-2 bg-gray-700 hover:bg-orange-600 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
+                            <button id="recalc-btn-${vId}" onclick="window.triggerTrafficRecalculate('${vId}')" class="w-full mt-2 py-2 bg-gray-700 hover:bg-orange-600 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
                                 <i class="fa-solid fa-code-merge"></i> Recalculate Traffic
                             </button>
                         </div>`;
@@ -912,309 +899,28 @@ function bootCommandCenter() {
                 console.error("Complete Network Failure. Deploying Direct Lines.", e);
             }
         }
-        updateBIMetrics(true);
+        window.updateBIMetrics(true);
     }
 
-    let lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
-
-    async function fetchLifetimeMetrics() {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
-                headers: { 
-                    'x-license-key': localStorage.getItem('uyo_license_key'),
-                    'Cache-Control': 'no-cache'
-                }
-            });
-            
-            if (response.status === 401) {
-                localStorage.removeItem('uyo_license_key');
-                window.location.href = "login.html";
-                return;
-            }
-
-            if (response.ok) {
-                const data = await response.json();
-                lifetimeStats.fuel = data.total_fuel_saved || 0;
-                lifetimeStats.co2 = data.total_co2_saved || 0;
-                lifetimeStats.efficiency = data.avg_efficiency || 0;
-                updateBIMetrics(false);
-            }
-        } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
-    }
-
-    // --- 100% SURVEY GRADE MATH FIX ---
-    function updateBIMetrics(isSession = false) {
-        const statFuelEl = document.getElementById('stat-fuel');
-        const statEffEl = document.getElementById('stat-efficiency');
-        const statCo2El = document.getElementById('stat-co2');
-
-        if (isSession) {
-            const peRaw = window.currentPhysicsEngine || {};
-            const pe = {
-                fuel_saved: Number(peRaw.fuel_saved) || 0,
-                co2_saved: Number(peRaw.co2_saved) || 0,
-                efficiency: Number(peRaw.efficiency) || 0
-            };
-            
-            if (statFuelEl) {
-                statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-                statFuelEl.innerText = `₦${Math.floor(pe.fuel_saved).toLocaleString()}`;
-                statFuelEl.style.color = "#fbbf24"; 
-            }
-            if (statEffEl) {
-                statEffEl.previousElementSibling.innerText = "Session Efficiency";
-                statEffEl.innerText = `${pe.efficiency.toFixed(1)}%`;
-                statEffEl.style.color = "#fbbf24";
-            }
-            if (statCo2El) {
-                statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-                statCo2El.innerText = `${pe.co2_saved.toFixed(2)} kg`;
-                statCo2El.style.color = "#fbbf24";
-            }
-        } else {
-            // --- LIFETIME STATS (Blue/Green/Red) ---
-            if (statFuelEl) {
-                statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
-                statFuelEl.innerText = `₦${Math.floor(lifetimeStats.fuel).toLocaleString()}`;
-                statFuelEl.style.color = "#4ade80"; 
-            }
-            if (statEffEl) {
-                statEffEl.previousElementSibling.innerText = "Avg Efficiency";
-                statEffEl.innerText = `${lifetimeStats.efficiency.toFixed(1)}%`;
-                statEffEl.style.color = "#60a5fa"; 
-            }
-            if (statCo2El) {
-                statCo2El.previousElementSibling.innerText = "Lifetime CO2";
-                statCo2El.innerText = `${lifetimeStats.co2.toFixed(1)} kg`;
-                statCo2El.style.color = "#f87171"; 
-            }
-        }
-        
-        if (document.getElementById('co2-bar')) { 
-            const displayEff = isSession ? (window.currentPhysicsEngine?.efficiency || 0) : lifetimeStats.efficiency;
-            document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
-        }
-    }
-
-    fetchLifetimeMetrics();
-
-    window.deployMission = async function(vehicleId, gmapsUrl) {
-        
-        const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
-        
-        const whatsappMessage = encodeURIComponent(
-            `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
-            `📦 *Vehicle ID:* ${vehicleId}\n` +
-            `📍 *Mission:* Optimized multi-stop delivery route generated by Command Center.\n\n` +
-            `📱 *Open Live Tracking & Navigation:* \n${trackingUrl}`
-        );
-        const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
-
-        const userChoice = confirm(
-            `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
-            `This will initiate live tracking and record the mission.\n\n` +
-            `Click OK to deploy.`
-        );
-
-        if (!userChoice) {
-            return; 
-        }
-
-        const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
-
-        const newTab = window.open('about:blank', '_blank'); 
-
-        try {
-            const coords = window.activeDeployments[vehicleId];
-            if (!coords) throw new Error("Route coordinates missing from memory.");
-            
-            // --- PATCH 1: Transmit Proportional Environmental Savings ---
-            let totalOsrmMins = 0;
-            for (let key in window.activeDeploymentsMins) {
-                totalOsrmMins += window.activeDeploymentsMins[key];
-            }
-            const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
-            const peRaw = window.currentPhysicsEngine || {};
-            const pe = {
-                fuel_saved: Number(peRaw.fuel_saved) || 0,
-                co2_saved: Number(peRaw.co2_saved) || 0,
-                efficiency: Number(peRaw.efficiency) || 0
-            };
-            
-            const payload = {
-                vehicle_id: vehicleId,
-                route_coords: coords,
-                fuel_saved: pe.fuel_saved * proportion, 
-                co2_saved: pe.co2_saved * proportion,
-                efficiency: pe.efficiency 
-            };
-            
-            const response = await fetch(`${API_BASE_URL}/api/vrp/dispatch`, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'x-license-key': localStorage.getItem('uyo_license_key')
-                },
-                body: JSON.stringify(payload)
-            });
-            
-            if (response.ok) {
-                console.log(`✅ Mission Deploy Success: ${vehicleId}`);
-                setTimeout(fetchLifetimeMetrics, 1500);
-                unassignedPinsLayer.clearLayers();
-
-                // --- PATCH 2: Hardened WebSocket Reconnection ---
-                if (!map.hasLayer(routeLayerGroup)) {
-                    map.addLayer(routeLayerGroup); 
-                } 
-                
-                if (!liveFleetSocket || liveFleetSocket.readyState === WebSocket.CLOSED || liveFleetSocket.readyState === WebSocket.CLOSING) {
-                    console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
-                    connectLiveFleet(); 
-                }
-
-                const btns = document.querySelectorAll('button');
-                btns.forEach(btn => {
-                    if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
-                        btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
-                        btn.style.backgroundColor = "#166534"; 
-                        btn.style.cursor = "not-allowed";
-                        btn.disabled = true;
-                    }
-                });
-
-                newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
-
-            } else {
-                newTab.close(); 
-                const errData = await response.json().catch(() => ({}));
-                throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
-            }
-        } catch (err) {
-            newTab.close(); 
-            console.error("Deployment Error:", err);
-            alert(`❌ Deployment Failed!\n\n${err.message}`);
-        }
-    };
-
-    let liveFleetSocket = null;
-    let liveMarkers = {}; 
-
-    map.on('overlayadd', function(e) {
+    window.map.on('overlayadd', function(e) {
         if (e.name.includes("Live Operations")) {
-            connectLiveFleet();
+            window.connectLiveFleet();
         }
     });
 
-    map.on('overlayremove', function(e) {
+    window.map.on('overlayremove', function(e) {
         if (e.name.includes("Live Operations")) {
-            if (liveFleetSocket) {
-                liveFleetSocket.close();
-                liveFleetSocket = null;
+            if (window.liveFleetSocket) {
+                window.liveFleetSocket.close();
+                window.liveFleetSocket = null;
                 console.log("📡 Live Fleet Telemetry: Disconnected");
             }
-            for (let id in liveMarkers) {
-                map.removeLayer(liveMarkers[id]);
+            for (let id in window.liveMarkers) {
+                window.map.removeLayer(window.liveMarkers[id]);
             }
-            liveMarkers = {};
+            window.liveMarkers = {};
         }
     });
-
-    function connectLiveFleet() {
-        liveFleetSocket = new WebSocket(`${WS_BASE_URL}/ws/live-fleet`);
-        liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
-        
-        liveFleetSocket.onmessage = async function(event) {
-            const data = JSON.parse(event.data);
-            
-            if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
-                if (data.status === 'completed') {
-                    console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
-                    if (liveMarkers[data.vehicle_id]) {
-                        map.removeLayer(liveMarkers[data.vehicle_id]);
-                        delete liveMarkers[data.vehicle_id];
-                    }
-                }
-                return; 
-            }
-
-            if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
-                console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
-                try {
-                    const syncRes = await fetch(`${API_BASE_URL}/api/vrp/active-missions`, {
-                        headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
-                    });
-                    const syncData = await syncRes.json();
-                    
-                    if (syncData.active_missions && syncData.active_missions[data.vehicle_id]) {
-                        const coords = syncData.active_missions[data.vehicle_id].coords;
-                        
-                        L.polyline(coords, { 
-                            color: '#f59e0b', 
-                            weight: 4, 
-                            opacity: 0.8, 
-                            dashArray: '10, 10', 
-                            pane: 'routePane' 
-                        }).addTo(routeLayerGroup);
-                        
-                        window.activeDeployments[data.vehicle_id] = coords;
-                        console.log(`✅ Global Sync Complete: Route drawn for ${data.vehicle_id}`);
-                    }
-                } catch (err) {
-                    console.warn("Global Sync Failed:", err);
-                }
-            }
-
-            if (liveMarkers[data.vehicle_id]) {
-                liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
-            } else {
-                // 1. Check Shared Registry first, fallback to string matching
-                const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
-                               ? window.fleetRegistry[data.vehicle_id] 
-                               : String(data.vehicle_id).toLowerCase().includes('bike');
-                               
-                // 2. Use Factory Method
-                liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
-                    icon: createLiveIcon(data.vehicle_id, isBike), 
-                    pane: 'poiPane'
-                }).addTo(map);
-            }
-            
-            // 3. Deviation Alert Override
-            if (data.deviation_alert) {
-                const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
-                const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
-                if (dotEl && badgeEl) {
-                    dotEl.style.background = '#f97316'; 
-                    dotEl.style.boxShadow = '0 0 25px #f97316';
-                    dotEl.style.border = '3px solid #000000';
-                    badgeEl.style.border = '1px solid #f97316';
-                    badgeEl.style.color = '#f97316';
-                }
-                console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
-            } else {
-                // Restore normal colors if they get back on track
-                const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
-                               ? window.fleetRegistry[data.vehicle_id] 
-                               : String(data.vehicle_id).toLowerCase().includes('bike');
-                const markerColor = isBike ? '#28a745' : '#dc3545';
-                const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
-                const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
-                if (dotEl && badgeEl) {
-                    dotEl.style.background = markerColor; 
-                    dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
-                    dotEl.style.border = '2.5px solid white';
-                    badgeEl.style.border = `1px solid ${markerColor}`;
-                    badgeEl.style.color = 'white';
-                }
-            }
-            
-            if (data.status === 'completed') { 
-                console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
-            }
-        };
-        liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
-    }
 
     window.initiateSubscriptionRenewal = function() {
         const planChoice = prompt(
@@ -1248,7 +954,7 @@ function bootCommandCenter() {
             currency: "NGN",
             ref: 'UYO-' + Math.floor((Math.random() * 1000000000) + 1),
             callback: function(response) {
-                fetch(`${API_BASE_URL}/api/vrp/activate-license`, {
+                fetch(`${window.API_BASE_URL}/api/vrp/activate-license`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -1277,79 +983,379 @@ function bootCommandCenter() {
         handler.openIframe();
     };
 
-    window.triggerTrafficRecalculate = async function(vehicleId) {
-        const activeCoords = window.activeDeployments[vehicleId];
-        if (!activeCoords) {
-            alert("Cannot recalculate: No active GPS data found for this vehicle.");
+    window.fetchLifetimeMetrics();
+}
+
+
+// ==============================================================================
+// --- EXTRACTED GLOBAL HANDLERS (SURVEY-GRADE DECOUPLING) ---
+// ==============================================================================
+
+window.createLiveIcon = function(vId, isBike) {
+    const color = isBike ? '#28a745' : '#dc3545';
+    const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
+    return L.divIcon({ 
+        className: 'live-ping', 
+        html: `
+            <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+                <div id="ping-dot-${vId}" style="background: ${color}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${color}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
+                    <i class="fa-solid ${icon}" style="color: white; font-size: 11px;"></i>
+                </div>
+                <div id="ping-badge-${vId}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
+                    <i class="fa-solid ${icon} mr-1"></i> ${vId}
+                </div>
+            </div>
+        `,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+};
+
+window.fetchLifetimeMetrics = async function() {
+    try {
+        const response = await fetch(`${window.API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
+            headers: { 
+                'x-license-key': localStorage.getItem('uyo_license_key'),
+                'Cache-Control': 'no-cache'
+            }
+        });
+        
+        if (response.status === 401) {
+            localStorage.removeItem('uyo_license_key');
+            window.location.href = "login.html";
             return;
         }
 
-        const currentLicenseKey = localStorage.getItem('uyo_license_key');
-        const btn = document.getElementById(`recalc-btn-${vehicleId}`);
+        if (response.ok) {
+            const data = await response.json();
+            window.lifetimeStats.fuel = data.total_fuel_saved || 0;
+            window.lifetimeStats.co2 = data.total_co2_saved || 0;
+            window.lifetimeStats.efficiency = data.avg_efficiency || 0;
+            window.updateBIMetrics(false);
+        }
+    } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
+};
+
+window.updateBIMetrics = function(isSession = false) {
+    const statFuelEl = document.getElementById('stat-fuel');
+    const statEffEl = document.getElementById('stat-efficiency');
+    const statCo2El = document.getElementById('stat-co2');
+
+    if (isSession) {
+        const peRaw = window.currentPhysicsEngine || {};
+        const pe = {
+            fuel_saved: Number(peRaw.fuel_saved) || 0,
+            co2_saved: Number(peRaw.co2_saved) || 0,
+            efficiency: Number(peRaw.efficiency) || 0
+        };
         
-        try {
-            if (btn) {
-                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking Traffic...`;
-                btn.disabled = true;
+        if (statFuelEl) {
+            statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
+            statFuelEl.innerText = `₦${Math.floor(pe.fuel_saved).toLocaleString()}`;
+            statFuelEl.style.color = "#fbbf24"; 
+        }
+        if (statEffEl) {
+            statEffEl.previousElementSibling.innerText = "Session Efficiency";
+            statEffEl.innerText = `${pe.efficiency.toFixed(1)}%`;
+            statEffEl.style.color = "#fbbf24";
+        }
+        if (statCo2El) {
+            statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
+            statCo2El.innerText = `${pe.co2_saved.toFixed(2)} kg`;
+            statCo2El.style.color = "#fbbf24";
+        }
+    } else {
+        // --- LIFETIME STATS (Blue/Green/Red) ---
+        if (statFuelEl) {
+            statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
+            statFuelEl.innerText = `₦${Math.floor(window.lifetimeStats.fuel).toLocaleString()}`;
+            statFuelEl.style.color = "#4ade80"; 
+        }
+        if (statEffEl) {
+            statEffEl.previousElementSibling.innerText = "Avg Efficiency";
+            statEffEl.innerText = `${window.lifetimeStats.efficiency.toFixed(1)}%`;
+            statEffEl.style.color = "#60a5fa"; 
+        }
+        if (statCo2El) {
+            statCo2El.previousElementSibling.innerText = "Lifetime CO2";
+            statCo2El.innerText = `${window.lifetimeStats.co2.toFixed(1)} kg`;
+            statCo2El.style.color = "#f87171"; 
+        }
+    }
+    
+    if (document.getElementById('co2-bar')) { 
+        const displayEff = isSession ? (window.currentPhysicsEngine?.efficiency || 0) : window.lifetimeStats.efficiency;
+        document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
+    }
+};
+
+window.deployMission = async function(vehicleId, gmapsUrl) {
+        
+    const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
+    
+    const whatsappMessage = encodeURIComponent(
+        `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
+        `📦 *Vehicle ID:* ${vehicleId}\n` +
+        `📍 *Mission:* Optimized multi-stop delivery route generated by Command Center.\n\n` +
+        `📱 *Open Live Tracking & Navigation:* \n${trackingUrl}`
+    );
+    const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
+
+    const userChoice = confirm(
+        `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
+        `This will initiate live tracking and record the mission.\n\n` +
+        `Click OK to deploy.`
+    );
+
+    if (!userChoice) {
+        return; 
+    }
+
+    const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
+
+    const newTab = window.open('about:blank', '_blank'); 
+
+    try {
+        const coords = window.activeDeployments[vehicleId];
+        if (!coords) throw new Error("Route coordinates missing from memory.");
+        
+        // --- PATCH 1: Transmit Proportional Environmental Savings ---
+        let totalOsrmMins = 0;
+        for (let key in window.activeDeploymentsMins) {
+            totalOsrmMins += window.activeDeploymentsMins[key];
+        }
+        const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
+        const peRaw = window.currentPhysicsEngine || {};
+        const pe = {
+            fuel_saved: Number(peRaw.fuel_saved) || 0,
+            co2_saved: Number(peRaw.co2_saved) || 0,
+            efficiency: Number(peRaw.efficiency) || 0
+        };
+        
+        const payload = {
+            vehicle_id: vehicleId,
+            route_coords: coords,
+            fuel_saved: pe.fuel_saved * proportion, 
+            co2_saved: pe.co2_saved * proportion,
+            efficiency: pe.efficiency 
+        };
+        
+        const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-license-key': localStorage.getItem('uyo_license_key')
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        if (response.ok) {
+            console.log(`✅ Mission Deploy Success: ${vehicleId}`);
+            setTimeout(window.fetchLifetimeMetrics, 1500);
+            window.unassignedPinsLayer.clearLayers();
+
+            // --- PATCH 2: Hardened WebSocket Reconnection ---
+            if (!window.map.hasLayer(window.routeLayerGroup)) {
+                window.map.addLayer(window.routeLayerGroup); 
+            } 
+            
+            if (!window.liveFleetSocket || window.liveFleetSocket.readyState === WebSocket.CLOSED || window.liveFleetSocket.readyState === WebSocket.CLOSING) {
+                console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
+                window.connectLiveFleet(); 
             }
 
-            console.log(`🚦 Re-optimizing remaining drops for ${vehicleId} using time-aware logic...`);
-            
-            const remainingDeliveries = dynamicDeliveries.length > 0 ? dynamicDeliveries : [];
-            
-            if (remainingDeliveries.length === 0) {
-                 alert("No remaining drops available to recalculate.");
-                 return;
-            }
-
-            const solveRes = await fetch(`${API_BASE_URL}/api/vrp/solve-dynamic`, { 
-                method: 'POST', 
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'x-license-key': currentLicenseKey
-                }, 
-                body: JSON.stringify({ 
-                    depot: depotLocation, 
-                    deliveries: remainingDeliveries, 
-                    fleet: [{ id: vehicleId, type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 0, cost_per_km: 50 }] 
-                }) 
+            const btns = document.querySelectorAll('button');
+            btns.forEach(btn => {
+                if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
+                    btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
+                    btn.style.backgroundColor = "#166534"; 
+                    btn.style.cursor = "not-allowed";
+                    btn.disabled = true;
+                }
             });
 
-            if (!solveRes.ok) throw new Error("Traffic Engine Failed.");
-            const data = await solveRes.json();
-            
-            if (data.traffic_multiplier > 1.0) {
-                console.warn(`⚠️ High Traffic Detected! Penalty applied: ${data.traffic_multiplier}x`);
-                document.body.style.borderTop = "5px solid #f97316"; 
-                setTimeout(() => document.body.style.borderTop = "none", 5000);
+            newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
+
+        } else {
+            newTab.close(); 
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
+        }
+    } catch (err) {
+        newTab.close(); 
+        console.error("Deployment Error:", err);
+        alert(`❌ Deployment Failed!\n\n${err.message}`);
+    }
+};
+
+window.connectLiveFleet = function() {
+    window.liveFleetSocket = new WebSocket(`${window.WS_BASE_URL}/ws/live-fleet`);
+    window.liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
+    
+    window.liveFleetSocket.onmessage = async function(event) {
+        const data = JSON.parse(event.data);
+        
+        if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
+            if (data.status === 'completed') {
+                console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+                if (window.liveMarkers[data.vehicle_id]) {
+                    window.map.removeLayer(window.liveMarkers[data.vehicle_id]);
+                    delete window.liveMarkers[data.vehicle_id];
+                }
             }
+            return; 
+        }
 
-            const newMapUrl = "https://www.google.com/maps/dir/?api=1"; 
-
-            const pushRes = await fetch(`${API_BASE_URL}/api/vrp/push-reroute`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    vehicle_id: vehicleId,
-                    new_gmaps_url: encodeURIComponent(newMapUrl)
-                })
-            });
-
-            if (pushRes.ok) {
-                alert(`✅ New Traffic-Aware Route Sent to ${vehicleId} Driver!`);
-            }
-
-        } catch (err) {
-            console.error("Reroute Error:", err);
-            alert("Failed to calculate new traffic route.");
-        } finally {
-            if (btn) {
-                btn.innerHTML = `<i class="fa-solid fa-code-merge"></i> Recalculate Traffic`;
-                btn.disabled = false;
+        if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
+            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
+            try {
+                const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
+                    headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
+                });
+                const syncData = await syncRes.json();
+                
+                if (syncData.active_missions && syncData.active_missions[data.vehicle_id]) {
+                    const coords = syncData.active_missions[data.vehicle_id].coords;
+                    
+                    L.polyline(coords, { 
+                        color: '#f59e0b', 
+                        weight: 4, 
+                        opacity: 0.8, 
+                        dashArray: '10, 10', 
+                        pane: 'routePane' 
+                    }).addTo(window.routeLayerGroup);
+                    
+                    window.activeDeployments[data.vehicle_id] = coords;
+                    console.log(`✅ Global Sync Complete: Route drawn for ${data.vehicle_id}`);
+                }
+            } catch (err) {
+                console.warn("Global Sync Failed:", err);
             }
         }
+
+        if (window.liveMarkers[data.vehicle_id]) {
+            window.liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
+        } else {
+            // 1. Check Shared Registry first, fallback to string matching
+            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
+                           ? window.fleetRegistry[data.vehicle_id] 
+                           : String(data.vehicle_id).toLowerCase().includes('bike');
+                           
+            // 2. Use Factory Method
+            window.liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
+                icon: window.createLiveIcon(data.vehicle_id, isBike), 
+                pane: 'poiPane'
+            }).addTo(window.map);
+        }
+        
+        // 3. Deviation Alert Override
+        if (data.deviation_alert) {
+            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
+            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+            if (dotEl && badgeEl) {
+                dotEl.style.background = '#f97316'; 
+                dotEl.style.boxShadow = '0 0 25px #f97316';
+                dotEl.style.border = '3px solid #000000';
+                badgeEl.style.border = '1px solid #f97316';
+                badgeEl.style.color = '#f97316';
+            }
+            console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
+        } else {
+            // Restore normal colors if they get back on track
+            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
+                           ? window.fleetRegistry[data.vehicle_id] 
+                           : String(data.vehicle_id).toLowerCase().includes('bike');
+            const markerColor = isBike ? '#28a745' : '#dc3545';
+            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
+            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+            if (dotEl && badgeEl) {
+                dotEl.style.background = markerColor; 
+                dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
+                dotEl.style.border = '2.5px solid white';
+                badgeEl.style.border = `1px solid ${markerColor}`;
+                badgeEl.style.color = 'white';
+            }
+        }
+        
+        if (data.status === 'completed') { 
+            console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+        }
     };
-}
+    window.liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
+};
+
+window.triggerTrafficRecalculate = async function(vehicleId) {
+    const activeCoords = window.activeDeployments[vehicleId];
+    if (!activeCoords) {
+        alert("Cannot recalculate: No active GPS data found for this vehicle.");
+        return;
+    }
+
+    const currentLicenseKey = localStorage.getItem('uyo_license_key');
+    const btn = document.getElementById(`recalc-btn-${vehicleId}`);
+    
+    try {
+        if (btn) {
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking Traffic...`;
+            btn.disabled = true;
+        }
+
+        console.log(`🚦 Re-optimizing remaining drops for ${vehicleId} using time-aware logic...`);
+        
+        const remainingDeliveries = window.dynamicDeliveries.length > 0 ? window.dynamicDeliveries : [];
+        
+        if (remainingDeliveries.length === 0) {
+             alert("No remaining drops available to recalculate.");
+             return;
+        }
+
+        const solveRes = await fetch(`${window.API_BASE_URL}/api/vrp/solve-dynamic`, { 
+            method: 'POST', 
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-license-key': currentLicenseKey
+            }, 
+            body: JSON.stringify({ 
+                depot: window.depotLocation, 
+                deliveries: remainingDeliveries, 
+                fleet: [{ id: vehicleId, type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 0, cost_per_km: 50 }] 
+            }) 
+        });
+
+        if (!solveRes.ok) throw new Error("Traffic Engine Failed.");
+        const data = await solveRes.json();
+        
+        if (data.traffic_multiplier > 1.0) {
+            console.warn(`⚠️ High Traffic Detected! Penalty applied: ${data.traffic_multiplier}x`);
+            document.body.style.borderTop = "5px solid #f97316"; 
+            setTimeout(() => document.body.style.borderTop = "none", 5000);
+        }
+
+        const newMapUrl = "https://www.google.com/maps/dir/?api=1"; 
+
+        const pushRes = await fetch(`${window.API_BASE_URL}/api/vrp/push-reroute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                vehicle_id: vehicleId,
+                new_gmaps_url: encodeURIComponent(newMapUrl)
+            })
+        });
+
+        if (pushRes.ok) {
+            alert(`✅ New Traffic-Aware Route Sent to ${vehicleId} Driver!`);
+        }
+
+    } catch (err) {
+        console.error("Reroute Error:", err);
+        alert("Failed to calculate new traffic route.");
+    } finally {
+        if (btn) {
+            btn.innerHTML = `<i class="fa-solid fa-code-merge"></i> Recalculate Traffic`;
+            btn.disabled = false;
+        }
+    }
+};
 
 // ==============================================================================
 // --- 14. CLIENT-SIDE CSV MANIFEST EXPORT (BYPASSES SERVERLESS LIMITS) ---
