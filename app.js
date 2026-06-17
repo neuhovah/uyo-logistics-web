@@ -15,6 +15,7 @@
 // v2.3.0: Centralized Physics Engine Sync & WS Race Condition Patch.
 // v2.3.1: Null-Safety & Defensive Data Parsing Patch (Resolves .toFixed undefined TypeErrors).
 // v2.3.2: 100% Survey-Grade Scope Extraction (Decoupled Global Handlers from Bootloader).
+// v2.3.3: Global Handler Hoisting Patch (Resolved Bootloader TypeError).
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -36,6 +37,446 @@ window.routeLayerGroup = null;
 window.unassignedPinsLayer = null;
 window.liveFleetSocket = null;
 
+// ==============================================================================
+// --- EXTRACTED GLOBAL HANDLERS (SURVEY-GRADE DECOUPLING) ---
+// ==============================================================================
+
+window.createLiveIcon = function(vId, isBike) {
+    const color = isBike ? '#28a745' : '#dc3545';
+    const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
+    return L.divIcon({ 
+        className: 'live-ping', 
+        html: `
+            <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+                <div id="ping-dot-${vId}" style="background: ${color}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${color}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
+                    <i class="fa-solid ${icon}" style="color: white; font-size: 11px;"></i>
+                </div>
+                <div id="ping-badge-${vId}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
+                    <i class="fa-solid ${icon} mr-1"></i> ${vId}
+                </div>
+            </div>
+        `,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+};
+
+window.fetchLifetimeMetrics = async function() {
+    try {
+        const response = await fetch(`${window.API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
+            headers: { 
+                'x-license-key': localStorage.getItem('uyo_license_key'),
+                'Cache-Control': 'no-cache'
+            }
+        });
+        
+        if (response.status === 401) {
+            localStorage.removeItem('uyo_license_key');
+            window.location.href = "login.html";
+            return;
+        }
+
+        if (response.ok) {
+            const data = await response.json();
+            window.lifetimeStats.fuel = data.total_fuel_saved || 0;
+            window.lifetimeStats.co2 = data.total_co2_saved || 0;
+            window.lifetimeStats.efficiency = data.avg_efficiency || 0;
+            window.updateBIMetrics(false);
+        }
+    } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
+};
+
+window.updateBIMetrics = function(isSession = false) {
+    const statFuelEl = document.getElementById('stat-fuel');
+    const statEffEl = document.getElementById('stat-efficiency');
+    const statCo2El = document.getElementById('stat-co2');
+
+    if (isSession) {
+        const peRaw = window.currentPhysicsEngine || {};
+        const pe = {
+            fuel_saved: Number(peRaw.fuel_saved) || 0,
+            co2_saved: Number(peRaw.co2_saved) || 0,
+            efficiency: Number(peRaw.efficiency) || 0
+        };
+        
+        if (statFuelEl) {
+            statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
+            statFuelEl.innerText = `₦${Math.floor(pe.fuel_saved).toLocaleString()}`;
+            statFuelEl.style.color = "#fbbf24"; 
+        }
+        if (statEffEl) {
+            statEffEl.previousElementSibling.innerText = "Session Efficiency";
+            statEffEl.innerText = `${pe.efficiency.toFixed(1)}%`;
+            statEffEl.style.color = "#fbbf24";
+        }
+        if (statCo2El) {
+            statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
+            statCo2El.innerText = `${pe.co2_saved.toFixed(2)} kg`;
+            statCo2El.style.color = "#fbbf24";
+        }
+    } else {
+        // --- LIFETIME STATS (Blue/Green/Red) ---
+        if (statFuelEl) {
+            statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
+            statFuelEl.innerText = `₦${Math.floor(window.lifetimeStats.fuel).toLocaleString()}`;
+            statFuelEl.style.color = "#4ade80"; 
+        }
+        if (statEffEl) {
+            statEffEl.previousElementSibling.innerText = "Avg Efficiency";
+            statEffEl.innerText = `${window.lifetimeStats.efficiency.toFixed(1)}%`;
+            statEffEl.style.color = "#60a5fa"; 
+        }
+        if (statCo2El) {
+            statCo2El.previousElementSibling.innerText = "Lifetime CO2";
+            statCo2El.innerText = `${window.lifetimeStats.co2.toFixed(1)} kg`;
+            statCo2El.style.color = "#f87171"; 
+        }
+    }
+    
+    if (document.getElementById('co2-bar')) { 
+        const displayEff = isSession ? (window.currentPhysicsEngine?.efficiency || 0) : window.lifetimeStats.efficiency;
+        document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
+    }
+};
+
+window.deployMission = async function(vehicleId, gmapsUrl) {
+        
+    const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
+    
+    const whatsappMessage = encodeURIComponent(
+        `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
+        `📦 *Vehicle ID:* ${vehicleId}\n` +
+        `📍 *Mission:* Optimized multi-stop delivery route generated by Command Center.\n\n` +
+        `📱 *Open Live Tracking & Navigation:* \n${trackingUrl}`
+    );
+    const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
+
+    const userChoice = confirm(
+        `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
+        `This will initiate live tracking and record the mission.\n\n` +
+        `Click OK to deploy.`
+    );
+
+    if (!userChoice) {
+        return; 
+    }
+
+    const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
+
+    const newTab = window.open('about:blank', '_blank'); 
+
+    try {
+        const coords = window.activeDeployments[vehicleId];
+        if (!coords) throw new Error("Route coordinates missing from memory.");
+        
+        // --- PATCH 1: Transmit Proportional Environmental Savings ---
+        let totalOsrmMins = 0;
+        for (let key in window.activeDeploymentsMins) {
+            totalOsrmMins += window.activeDeploymentsMins[key];
+        }
+        const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
+        const peRaw = window.currentPhysicsEngine || {};
+        const pe = {
+            fuel_saved: Number(peRaw.fuel_saved) || 0,
+            co2_saved: Number(peRaw.co2_saved) || 0,
+            efficiency: Number(peRaw.efficiency) || 0
+        };
+        
+        const payload = {
+            vehicle_id: vehicleId,
+            route_coords: coords,
+            fuel_saved: pe.fuel_saved * proportion, 
+            co2_saved: pe.co2_saved * proportion,
+            efficiency: pe.efficiency 
+        };
+        
+        const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-license-key': localStorage.getItem('uyo_license_key')
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        if (response.ok) {
+            console.log(`✅ Mission Deploy Success: ${vehicleId}`);
+            setTimeout(window.fetchLifetimeMetrics, 1500);
+            window.unassignedPinsLayer.clearLayers();
+
+            // --- PATCH 2: Hardened WebSocket Reconnection ---
+            if (!window.map.hasLayer(window.routeLayerGroup)) {
+                window.map.addLayer(window.routeLayerGroup); 
+            } 
+            
+            if (!window.liveFleetSocket || window.liveFleetSocket.readyState === WebSocket.CLOSED || window.liveFleetSocket.readyState === WebSocket.CLOSING) {
+                console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
+                window.connectLiveFleet(); 
+            }
+
+            const btns = document.querySelectorAll('button');
+            btns.forEach(btn => {
+                if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
+                    btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
+                    btn.style.backgroundColor = "#166534"; 
+                    btn.style.cursor = "not-allowed";
+                    btn.disabled = true;
+                }
+            });
+
+            newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
+
+        } else {
+            newTab.close(); 
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
+        }
+    } catch (err) {
+        newTab.close(); 
+        console.error("Deployment Error:", err);
+        alert(`❌ Deployment Failed!\n\n${err.message}`);
+    }
+};
+
+window.connectLiveFleet = function() {
+    window.liveFleetSocket = new WebSocket(`${window.WS_BASE_URL}/ws/live-fleet`);
+    window.liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
+    
+    window.liveFleetSocket.onmessage = async function(event) {
+        const data = JSON.parse(event.data);
+        
+        if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
+            if (data.status === 'completed') {
+                console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+                if (window.liveMarkers[data.vehicle_id]) {
+                    window.map.removeLayer(window.liveMarkers[data.vehicle_id]);
+                    delete window.liveMarkers[data.vehicle_id];
+                }
+            }
+            return; 
+        }
+
+        if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
+            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
+            try {
+                const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
+                    headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
+                });
+                const syncData = await syncRes.json();
+                
+                if (syncData.active_missions && syncData.active_missions[data.vehicle_id]) {
+                    const coords = syncData.active_missions[data.vehicle_id].coords;
+                    
+                    L.polyline(coords, { 
+                        color: '#f59e0b', 
+                        weight: 4, 
+                        opacity: 0.8, 
+                        dashArray: '10, 10', 
+                        pane: 'routePane' 
+                    }).addTo(window.routeLayerGroup);
+                    
+                    window.activeDeployments[data.vehicle_id] = coords;
+                    console.log(`✅ Global Sync Complete: Route drawn for ${data.vehicle_id}`);
+                }
+            } catch (err) {
+                console.warn("Global Sync Failed:", err);
+            }
+        }
+
+        if (window.liveMarkers[data.vehicle_id]) {
+            window.liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
+        } else {
+            // 1. Check Shared Registry first, fallback to string matching
+            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
+                           ? window.fleetRegistry[data.vehicle_id] 
+                           : String(data.vehicle_id).toLowerCase().includes('bike');
+                           
+            // 2. Use Factory Method
+            window.liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
+                icon: window.createLiveIcon(data.vehicle_id, isBike), 
+                pane: 'poiPane'
+            }).addTo(window.map);
+        }
+        
+        // 3. Deviation Alert Override
+        if (data.deviation_alert) {
+            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
+            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+            if (dotEl && badgeEl) {
+                dotEl.style.background = '#f97316'; 
+                dotEl.style.boxShadow = '0 0 25px #f97316';
+                dotEl.style.border = '3px solid #000000';
+                badgeEl.style.border = '1px solid #f97316';
+                badgeEl.style.color = '#f97316';
+            }
+            console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
+        } else {
+            // Restore normal colors if they get back on track
+            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
+                           ? window.fleetRegistry[data.vehicle_id] 
+                           : String(data.vehicle_id).toLowerCase().includes('bike');
+            const markerColor = isBike ? '#28a745' : '#dc3545';
+            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
+            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+            if (dotEl && badgeEl) {
+                dotEl.style.background = markerColor; 
+                dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
+                dotEl.style.border = '2.5px solid white';
+                badgeEl.style.border = `1px solid ${markerColor}`;
+                badgeEl.style.color = 'white';
+            }
+        }
+        
+        if (data.status === 'completed') { 
+            console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+        }
+    };
+    window.liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
+};
+
+window.triggerTrafficRecalculate = async function(vehicleId) {
+    const activeCoords = window.activeDeployments[vehicleId];
+    if (!activeCoords) {
+        alert("Cannot recalculate: No active GPS data found for this vehicle.");
+        return;
+    }
+
+    const currentLicenseKey = localStorage.getItem('uyo_license_key');
+    const btn = document.getElementById(`recalc-btn-${vehicleId}`);
+    
+    try {
+        if (btn) {
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking Traffic...`;
+            btn.disabled = true;
+        }
+
+        console.log(`🚦 Re-optimizing remaining drops for ${vehicleId} using time-aware logic...`);
+        
+        const remainingDeliveries = window.dynamicDeliveries.length > 0 ? window.dynamicDeliveries : [];
+        
+        if (remainingDeliveries.length === 0) {
+             alert("No remaining drops available to recalculate.");
+             return;
+        }
+
+        const solveRes = await fetch(`${window.API_BASE_URL}/api/vrp/solve-dynamic`, { 
+            method: 'POST', 
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-license-key': currentLicenseKey
+            }, 
+            body: JSON.stringify({ 
+                depot: window.depotLocation, 
+                deliveries: remainingDeliveries, 
+                fleet: [{ id: vehicleId, type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 0, cost_per_km: 50 }] 
+            }) 
+        });
+
+        if (!solveRes.ok) throw new Error("Traffic Engine Failed.");
+        const data = await solveRes.json();
+        
+        if (data.traffic_multiplier > 1.0) {
+            console.warn(`⚠️ High Traffic Detected! Penalty applied: ${data.traffic_multiplier}x`);
+            document.body.style.borderTop = "5px solid #f97316"; 
+            setTimeout(() => document.body.style.borderTop = "none", 5000);
+        }
+
+        const newMapUrl = "https://www.google.com/maps/dir/?api=1"; 
+
+        const pushRes = await fetch(`${window.API_BASE_URL}/api/vrp/push-reroute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                vehicle_id: vehicleId,
+                new_gmaps_url: encodeURIComponent(newMapUrl)
+            })
+        });
+
+        if (pushRes.ok) {
+            alert(`✅ New Traffic-Aware Route Sent to ${vehicleId} Driver!`);
+        }
+
+    } catch (err) {
+        console.error("Reroute Error:", err);
+        alert("Failed to calculate new traffic route.");
+    } finally {
+        if (btn) {
+            btn.innerHTML = `<i class="fa-solid fa-code-merge"></i> Recalculate Traffic`;
+            btn.disabled = false;
+        }
+    }
+};
+
+window.downloadSurveyManifest = function(routeData, opIntelData) {
+    let csvContent = "\uFEFFVehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
+
+    const routesArray = routeData.routes || routeData.optimized_routes || [];
+    
+    routesArray.forEach(route => {
+        const vehicleId = route.vehicle_id || route.id || "UYO-VEH-1";
+        const vehicleType = route.vehicle_type || route.type || "van";
+        
+        let details = route.route_details;
+        if (!details && route.route) {
+            details = route.route.map((nodeId, idx) => {
+                return {
+                    stop_sequence: idx,
+                    node_id: nodeId,
+                    arrival_time: "Calculated Live",
+                    demand: (idx === 0 || idx === route.route.length - 1) ? 0 : 1,
+                    cumulative_mins: 0
+                };
+            });
+        }
+
+        if (!details) return;
+
+        const maxSeq = details.length - 1; 
+
+        details.forEach(stop => {
+            let status = "On Route";
+            if (stop.stop_sequence === maxSeq) status = "Return to Depot";
+
+            let row = [
+                vehicleId,
+                vehicleType,
+                stop.stop_sequence,
+                stop.arrival_time || "00:00 AM",
+                stop.node_id,
+                stop.demand || stop.weight_load_after_stop || stop.inventory_load || 0,
+                Number(stop.cumulative_mins || 0).toFixed(2),
+                status
+            ].join(",");
+            csvContent += row + "\n";
+        });
+    });
+
+    csvContent += ",,,,,,,\n"; 
+    csvContent += "--- EXECUTIVE BI SUMMARY ---,,,,,,,\n";
+    
+    csvContent += `Total Orders Dispatched,"${opIntelData.drops || 0} Drops",,,,,,\n`;
+    csvContent += `Total Fleet Operation Time,"${opIntelData.total_mins || 0} Mins",,,,,,\n`;
+    csvContent += `Estimated Fuel Savings,"${opIntelData.fuel_saved || '₦0'}",,,,,,\n`;
+    csvContent += `Fleet Efficiency Score,"${opIntelData.efficiency || '0%'}",,,,,,\n`;
+    csvContent += `CO2 Emission Offset,"${opIntelData.co2_saved || '0 kg'}",,,,,,\n`;
+    
+    const now = new Date();
+    const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
+    csvContent += `Optimization Timestamp,"${timestamp}",,,,,,\n`;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    
+    const filenameId = Math.floor(Math.random() * 900000) + 100000; 
+    link.setAttribute("download", `Uyo_Logistics_Report_${filenameId}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
 
 // --- 1. SECURITY HANDSHAKE (OPTIMISTIC UI SECURE BOOT) ---
 const activeLicenseKey = localStorage.getItem('uyo_license_key');
@@ -71,7 +512,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.2 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.3 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -985,448 +1426,3 @@ function bootCommandCenter() {
 
     window.fetchLifetimeMetrics();
 }
-
-
-// ==============================================================================
-// --- EXTRACTED GLOBAL HANDLERS (SURVEY-GRADE DECOUPLING) ---
-// ==============================================================================
-
-window.createLiveIcon = function(vId, isBike) {
-    const color = isBike ? '#28a745' : '#dc3545';
-    const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
-    return L.divIcon({ 
-        className: 'live-ping', 
-        html: `
-            <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-                <div id="ping-dot-${vId}" style="background: ${color}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${color}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
-                    <i class="fa-solid ${icon}" style="color: white; font-size: 11px;"></i>
-                </div>
-                <div id="ping-badge-${vId}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
-                    <i class="fa-solid ${icon} mr-1"></i> ${vId}
-                </div>
-            </div>
-        `,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12]
-    });
-};
-
-window.fetchLifetimeMetrics = async function() {
-    try {
-        const response = await fetch(`${window.API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
-            headers: { 
-                'x-license-key': localStorage.getItem('uyo_license_key'),
-                'Cache-Control': 'no-cache'
-            }
-        });
-        
-        if (response.status === 401) {
-            localStorage.removeItem('uyo_license_key');
-            window.location.href = "login.html";
-            return;
-        }
-
-        if (response.ok) {
-            const data = await response.json();
-            window.lifetimeStats.fuel = data.total_fuel_saved || 0;
-            window.lifetimeStats.co2 = data.total_co2_saved || 0;
-            window.lifetimeStats.efficiency = data.avg_efficiency || 0;
-            window.updateBIMetrics(false);
-        }
-    } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
-};
-
-window.updateBIMetrics = function(isSession = false) {
-    const statFuelEl = document.getElementById('stat-fuel');
-    const statEffEl = document.getElementById('stat-efficiency');
-    const statCo2El = document.getElementById('stat-co2');
-
-    if (isSession) {
-        const peRaw = window.currentPhysicsEngine || {};
-        const pe = {
-            fuel_saved: Number(peRaw.fuel_saved) || 0,
-            co2_saved: Number(peRaw.co2_saved) || 0,
-            efficiency: Number(peRaw.efficiency) || 0
-        };
-        
-        if (statFuelEl) {
-            statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-            statFuelEl.innerText = `₦${Math.floor(pe.fuel_saved).toLocaleString()}`;
-            statFuelEl.style.color = "#fbbf24"; 
-        }
-        if (statEffEl) {
-            statEffEl.previousElementSibling.innerText = "Session Efficiency";
-            statEffEl.innerText = `${pe.efficiency.toFixed(1)}%`;
-            statEffEl.style.color = "#fbbf24";
-        }
-        if (statCo2El) {
-            statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-            statCo2El.innerText = `${pe.co2_saved.toFixed(2)} kg`;
-            statCo2El.style.color = "#fbbf24";
-        }
-    } else {
-        // --- LIFETIME STATS (Blue/Green/Red) ---
-        if (statFuelEl) {
-            statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
-            statFuelEl.innerText = `₦${Math.floor(window.lifetimeStats.fuel).toLocaleString()}`;
-            statFuelEl.style.color = "#4ade80"; 
-        }
-        if (statEffEl) {
-            statEffEl.previousElementSibling.innerText = "Avg Efficiency";
-            statEffEl.innerText = `${window.lifetimeStats.efficiency.toFixed(1)}%`;
-            statEffEl.style.color = "#60a5fa"; 
-        }
-        if (statCo2El) {
-            statCo2El.previousElementSibling.innerText = "Lifetime CO2";
-            statCo2El.innerText = `${window.lifetimeStats.co2.toFixed(1)} kg`;
-            statCo2El.style.color = "#f87171"; 
-        }
-    }
-    
-    if (document.getElementById('co2-bar')) { 
-        const displayEff = isSession ? (window.currentPhysicsEngine?.efficiency || 0) : window.lifetimeStats.efficiency;
-        document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
-    }
-};
-
-window.deployMission = async function(vehicleId, gmapsUrl) {
-        
-    const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
-    
-    const whatsappMessage = encodeURIComponent(
-        `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
-        `📦 *Vehicle ID:* ${vehicleId}\n` +
-        `📍 *Mission:* Optimized multi-stop delivery route generated by Command Center.\n\n` +
-        `📱 *Open Live Tracking & Navigation:* \n${trackingUrl}`
-    );
-    const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
-
-    const userChoice = confirm(
-        `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
-        `This will initiate live tracking and record the mission.\n\n` +
-        `Click OK to deploy.`
-    );
-
-    if (!userChoice) {
-        return; 
-    }
-
-    const useWhatsApp = confirm("✅ Mission Authorized! \n\nDo you want to send this to the driver via WhatsApp?\n\n(Click 'Cancel' to just open the Tracker locally on this computer)");
-
-    const newTab = window.open('about:blank', '_blank'); 
-
-    try {
-        const coords = window.activeDeployments[vehicleId];
-        if (!coords) throw new Error("Route coordinates missing from memory.");
-        
-        // --- PATCH 1: Transmit Proportional Environmental Savings ---
-        let totalOsrmMins = 0;
-        for (let key in window.activeDeploymentsMins) {
-            totalOsrmMins += window.activeDeploymentsMins[key];
-        }
-        const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
-        const peRaw = window.currentPhysicsEngine || {};
-        const pe = {
-            fuel_saved: Number(peRaw.fuel_saved) || 0,
-            co2_saved: Number(peRaw.co2_saved) || 0,
-            efficiency: Number(peRaw.efficiency) || 0
-        };
-        
-        const payload = {
-            vehicle_id: vehicleId,
-            route_coords: coords,
-            fuel_saved: pe.fuel_saved * proportion, 
-            co2_saved: pe.co2_saved * proportion,
-            efficiency: pe.efficiency 
-        };
-        
-        const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'x-license-key': localStorage.getItem('uyo_license_key')
-            },
-            body: JSON.stringify(payload)
-        });
-        
-        if (response.ok) {
-            console.log(`✅ Mission Deploy Success: ${vehicleId}`);
-            setTimeout(window.fetchLifetimeMetrics, 1500);
-            window.unassignedPinsLayer.clearLayers();
-
-            // --- PATCH 2: Hardened WebSocket Reconnection ---
-            if (!window.map.hasLayer(window.routeLayerGroup)) {
-                window.map.addLayer(window.routeLayerGroup); 
-            } 
-            
-            if (!window.liveFleetSocket || window.liveFleetSocket.readyState === WebSocket.CLOSED || window.liveFleetSocket.readyState === WebSocket.CLOSING) {
-                console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
-                window.connectLiveFleet(); 
-            }
-
-            const btns = document.querySelectorAll('button');
-            btns.forEach(btn => {
-                if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
-                    btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
-                    btn.style.backgroundColor = "#166534"; 
-                    btn.style.cursor = "not-allowed";
-                    btn.disabled = true;
-                }
-            });
-
-            newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
-
-        } else {
-            newTab.close(); 
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
-        }
-    } catch (err) {
-        newTab.close(); 
-        console.error("Deployment Error:", err);
-        alert(`❌ Deployment Failed!\n\n${err.message}`);
-    }
-};
-
-window.connectLiveFleet = function() {
-    window.liveFleetSocket = new WebSocket(`${window.WS_BASE_URL}/ws/live-fleet`);
-    window.liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
-    
-    window.liveFleetSocket.onmessage = async function(event) {
-        const data = JSON.parse(event.data);
-        
-        if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
-            if (data.status === 'completed') {
-                console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
-                if (window.liveMarkers[data.vehicle_id]) {
-                    window.map.removeLayer(window.liveMarkers[data.vehicle_id]);
-                    delete window.liveMarkers[data.vehicle_id];
-                }
-            }
-            return; 
-        }
-
-        if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
-            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
-            try {
-                const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
-                    headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
-                });
-                const syncData = await syncRes.json();
-                
-                if (syncData.active_missions && syncData.active_missions[data.vehicle_id]) {
-                    const coords = syncData.active_missions[data.vehicle_id].coords;
-                    
-                    L.polyline(coords, { 
-                        color: '#f59e0b', 
-                        weight: 4, 
-                        opacity: 0.8, 
-                        dashArray: '10, 10', 
-                        pane: 'routePane' 
-                    }).addTo(window.routeLayerGroup);
-                    
-                    window.activeDeployments[data.vehicle_id] = coords;
-                    console.log(`✅ Global Sync Complete: Route drawn for ${data.vehicle_id}`);
-                }
-            } catch (err) {
-                console.warn("Global Sync Failed:", err);
-            }
-        }
-
-        if (window.liveMarkers[data.vehicle_id]) {
-            window.liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
-        } else {
-            // 1. Check Shared Registry first, fallback to string matching
-            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
-                           ? window.fleetRegistry[data.vehicle_id] 
-                           : String(data.vehicle_id).toLowerCase().includes('bike');
-                           
-            // 2. Use Factory Method
-            window.liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
-                icon: window.createLiveIcon(data.vehicle_id, isBike), 
-                pane: 'poiPane'
-            }).addTo(window.map);
-        }
-        
-        // 3. Deviation Alert Override
-        if (data.deviation_alert) {
-            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
-            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
-            if (dotEl && badgeEl) {
-                dotEl.style.background = '#f97316'; 
-                dotEl.style.boxShadow = '0 0 25px #f97316';
-                dotEl.style.border = '3px solid #000000';
-                badgeEl.style.border = '1px solid #f97316';
-                badgeEl.style.color = '#f97316';
-            }
-            console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
-        } else {
-            // Restore normal colors if they get back on track
-            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
-                           ? window.fleetRegistry[data.vehicle_id] 
-                           : String(data.vehicle_id).toLowerCase().includes('bike');
-            const markerColor = isBike ? '#28a745' : '#dc3545';
-            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
-            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
-            if (dotEl && badgeEl) {
-                dotEl.style.background = markerColor; 
-                dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
-                dotEl.style.border = '2.5px solid white';
-                badgeEl.style.border = `1px solid ${markerColor}`;
-                badgeEl.style.color = 'white';
-            }
-        }
-        
-        if (data.status === 'completed') { 
-            console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
-        }
-    };
-    window.liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
-};
-
-window.triggerTrafficRecalculate = async function(vehicleId) {
-    const activeCoords = window.activeDeployments[vehicleId];
-    if (!activeCoords) {
-        alert("Cannot recalculate: No active GPS data found for this vehicle.");
-        return;
-    }
-
-    const currentLicenseKey = localStorage.getItem('uyo_license_key');
-    const btn = document.getElementById(`recalc-btn-${vehicleId}`);
-    
-    try {
-        if (btn) {
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking Traffic...`;
-            btn.disabled = true;
-        }
-
-        console.log(`🚦 Re-optimizing remaining drops for ${vehicleId} using time-aware logic...`);
-        
-        const remainingDeliveries = window.dynamicDeliveries.length > 0 ? window.dynamicDeliveries : [];
-        
-        if (remainingDeliveries.length === 0) {
-             alert("No remaining drops available to recalculate.");
-             return;
-        }
-
-        const solveRes = await fetch(`${window.API_BASE_URL}/api/vrp/solve-dynamic`, { 
-            method: 'POST', 
-            headers: { 
-                'Content-Type': 'application/json',
-                'x-license-key': currentLicenseKey
-            }, 
-            body: JSON.stringify({ 
-                depot: window.depotLocation, 
-                deliveries: remainingDeliveries, 
-                fleet: [{ id: vehicleId, type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 0, cost_per_km: 50 }] 
-            }) 
-        });
-
-        if (!solveRes.ok) throw new Error("Traffic Engine Failed.");
-        const data = await solveRes.json();
-        
-        if (data.traffic_multiplier > 1.0) {
-            console.warn(`⚠️ High Traffic Detected! Penalty applied: ${data.traffic_multiplier}x`);
-            document.body.style.borderTop = "5px solid #f97316"; 
-            setTimeout(() => document.body.style.borderTop = "none", 5000);
-        }
-
-        const newMapUrl = "https://www.google.com/maps/dir/?api=1"; 
-
-        const pushRes = await fetch(`${window.API_BASE_URL}/api/vrp/push-reroute`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                vehicle_id: vehicleId,
-                new_gmaps_url: encodeURIComponent(newMapUrl)
-            })
-        });
-
-        if (pushRes.ok) {
-            alert(`✅ New Traffic-Aware Route Sent to ${vehicleId} Driver!`);
-        }
-
-    } catch (err) {
-        console.error("Reroute Error:", err);
-        alert("Failed to calculate new traffic route.");
-    } finally {
-        if (btn) {
-            btn.innerHTML = `<i class="fa-solid fa-code-merge"></i> Recalculate Traffic`;
-            btn.disabled = false;
-        }
-    }
-};
-
-// ==============================================================================
-// --- 14. CLIENT-SIDE CSV MANIFEST EXPORT (BYPASSES SERVERLESS LIMITS) ---
-// ==============================================================================
-window.downloadSurveyManifest = function(routeData, opIntelData) {
-    let csvContent = "\uFEFFVehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
-
-    const routesArray = routeData.routes || routeData.optimized_routes || [];
-    
-    routesArray.forEach(route => {
-        const vehicleId = route.vehicle_id || route.id || "UYO-VEH-1";
-        const vehicleType = route.vehicle_type || route.type || "van";
-        
-        let details = route.route_details;
-        if (!details && route.route) {
-            details = route.route.map((nodeId, idx) => {
-                return {
-                    stop_sequence: idx,
-                    node_id: nodeId,
-                    arrival_time: "Calculated Live",
-                    demand: (idx === 0 || idx === route.route.length - 1) ? 0 : 1,
-                    cumulative_mins: 0
-                };
-            });
-        }
-
-        if (!details) return;
-
-        const maxSeq = details.length - 1; 
-
-        details.forEach(stop => {
-            let status = "On Route";
-            if (stop.stop_sequence === maxSeq) status = "Return to Depot";
-
-            let row = [
-                vehicleId,
-                vehicleType,
-                stop.stop_sequence,
-                stop.arrival_time || "00:00 AM",
-                stop.node_id,
-                stop.demand || stop.weight_load_after_stop || stop.inventory_load || 0,
-                Number(stop.cumulative_mins || 0).toFixed(2),
-                status
-            ].join(",");
-            csvContent += row + "\n";
-        });
-    });
-
-    csvContent += ",,,,,,,\n"; 
-    csvContent += "--- EXECUTIVE BI SUMMARY ---,,,,,,,\n";
-    
-    csvContent += `Total Orders Dispatched,"${opIntelData.drops || 0} Drops",,,,,,\n`;
-    csvContent += `Total Fleet Operation Time,"${opIntelData.total_mins || 0} Mins",,,,,,\n`;
-    csvContent += `Estimated Fuel Savings,"${opIntelData.fuel_saved || '₦0'}",,,,,,\n`;
-    csvContent += `Fleet Efficiency Score,"${opIntelData.efficiency || '0%'}",,,,,,\n`;
-    csvContent += `CO2 Emission Offset,"${opIntelData.co2_saved || '0 kg'}",,,,,,\n`;
-    
-    const now = new Date();
-    const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
-    csvContent += `Optimization Timestamp,"${timestamp}",,,,,,\n`;
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    
-    const filenameId = Math.floor(Math.random() * 900000) + 100000; 
-    link.setAttribute("download", `Uyo_Logistics_Report_${filenameId}.csv`);
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-};
