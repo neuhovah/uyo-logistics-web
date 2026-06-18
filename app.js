@@ -16,6 +16,7 @@
 // v2.3.1: Null-Safety & Defensive Data Parsing Patch (Resolves .toFixed undefined TypeErrors).
 // v2.3.2: 100% Survey-Grade Scope Extraction (Decoupled Global Handlers from Bootloader).
 // v2.3.3: Global Handler Hoisting Patch (Resolved Bootloader TypeError).
+// v2.3.4: Survey-Grade Math & Sync: Implemented strict await/async Promise chains for /dispatch and high-precision Float64 UI rendering. 
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -91,50 +92,50 @@ window.updateBIMetrics = function(isSession = false) {
     const statEffEl = document.getElementById('stat-efficiency');
     const statCo2El = document.getElementById('stat-co2');
 
+    const pe = window.currentPhysicsEngine || {};
+    // Example rate multiplier: Replace 800 with actual fuel price per liter if pe.fuel_saved is in liters. 
+    // If it is already returned in Naira, set this to 1.
+    const MULTIPLIER = 1; 
+
     if (isSession) {
-        const peRaw = window.currentPhysicsEngine || {};
-        const pe = {
-            fuel_saved: Number(peRaw.fuel_saved) || 0,
-            co2_saved: Number(peRaw.co2_saved) || 0,
-            efficiency: Number(peRaw.efficiency) || 0
-        };
-        
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-            statFuelEl.innerText = `₦${Math.floor(pe.fuel_saved).toLocaleString()}`;
+            const sessionFuelValue = (Number(pe.fuel_saved) || 0) * MULTIPLIER;
+            statFuelEl.innerText = `₦${sessionFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#fbbf24"; 
         }
         if (statEffEl) {
             statEffEl.previousElementSibling.innerText = "Session Efficiency";
-            statEffEl.innerText = `${pe.efficiency.toFixed(1)}%`;
+            statEffEl.innerText = `${(Number(pe.efficiency) || 0).toFixed(1)}%`;
             statEffEl.style.color = "#fbbf24";
         }
         if (statCo2El) {
             statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-            statCo2El.innerText = `${pe.co2_saved.toFixed(2)} kg`;
+            statCo2El.innerText = `${(Number(pe.co2_saved) || 0).toFixed(2)} kg`;
             statCo2El.style.color = "#fbbf24";
         }
     } else {
         // --- LIFETIME STATS (Blue/Green/Red) ---
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
-            statFuelEl.innerText = `₦${Math.floor(window.lifetimeStats.fuel).toLocaleString()}`;
+            const lifeFuelValue = (Number(window.lifetimeStats.fuel) || 0) * MULTIPLIER;
+            statFuelEl.innerText = `₦${lifeFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#4ade80"; 
         }
         if (statEffEl) {
             statEffEl.previousElementSibling.innerText = "Avg Efficiency";
-            statEffEl.innerText = `${window.lifetimeStats.efficiency.toFixed(1)}%`;
+            statEffEl.innerText = `${(Number(window.lifetimeStats.efficiency) || 0).toFixed(1)}%`;
             statEffEl.style.color = "#60a5fa"; 
         }
         if (statCo2El) {
             statCo2El.previousElementSibling.innerText = "Lifetime CO2";
-            statCo2El.innerText = `${window.lifetimeStats.co2.toFixed(1)} kg`;
+            statCo2El.innerText = `${(Number(window.lifetimeStats.co2) || 0).toFixed(1)} kg`;
             statCo2El.style.color = "#f87171"; 
         }
     }
     
     if (document.getElementById('co2-bar')) { 
-        const displayEff = isSession ? (window.currentPhysicsEngine?.efficiency || 0) : window.lifetimeStats.efficiency;
+        const displayEff = isSession ? (pe.efficiency || 0) : (window.lifetimeStats.efficiency || 0);
         document.getElementById('co2-bar').style.width = `${Math.min(displayEff * 2, 100)}%`; 
     }
 };
@@ -169,27 +170,17 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         const coords = window.activeDeployments[vehicleId];
         if (!coords) throw new Error("Route coordinates missing from memory.");
         
-        // --- PATCH 1: Transmit Proportional Environmental Savings ---
-        let totalOsrmMins = 0;
-        for (let key in window.activeDeploymentsMins) {
-            totalOsrmMins += window.activeDeploymentsMins[key];
-        }
-        const proportion = totalOsrmMins > 0 ? ((window.activeDeploymentsMins[vehicleId] || 0) / totalOsrmMins) : 1;
+        // Survey-Grade Payload: Strict Number Coercion and raw floats. 
         const peRaw = window.currentPhysicsEngine || {};
-        const pe = {
-            fuel_saved: Number(peRaw.fuel_saved) || 0,
+        const payload = {
+            vehicle_id: vehicleId,
+            route_coords: coords,
+            fuel_saved: Number(peRaw.fuel_saved) || 0, 
             co2_saved: Number(peRaw.co2_saved) || 0,
             efficiency: Number(peRaw.efficiency) || 0
         };
         
-        const payload = {
-            vehicle_id: vehicleId,
-            route_coords: coords,
-            fuel_saved: pe.fuel_saved * proportion, 
-            co2_saved: pe.co2_saved * proportion,
-            efficiency: pe.efficiency 
-        };
-        
+        // Asynchronous Promise Chain starts here
         const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
             method: 'POST',
             headers: { 
@@ -199,41 +190,41 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             body: JSON.stringify(payload)
         });
         
-        if (response.ok) {
-            console.log(`✅ Mission Deploy Success: ${vehicleId}`);
-            setTimeout(window.fetchLifetimeMetrics, 1500);
-            window.unassignedPinsLayer.clearLayers();
-
-            // --- PATCH 2: Hardened WebSocket Reconnection ---
-            if (!window.map.hasLayer(window.routeLayerGroup)) {
-                window.map.addLayer(window.routeLayerGroup); 
-            } 
-            
-            if (!window.liveFleetSocket || window.liveFleetSocket.readyState === WebSocket.CLOSED || window.liveFleetSocket.readyState === WebSocket.CLOSING) {
-                console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
-                window.connectLiveFleet(); 
-            }
-
-            const btns = document.querySelectorAll('button');
-            btns.forEach(btn => {
-                if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick').includes(vehicleId)) {
-                    btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
-                    btn.style.backgroundColor = "#166534"; 
-                    btn.style.cursor = "not-allowed";
-                    btn.disabled = true;
-                }
-            });
-
-            newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
-
-        } else {
-            newTab.close(); 
+        if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
             throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
         }
+
+        // Execution strictly halts here until POST is resolved
+        console.log(`✅ Mission Deploy Success: ${vehicleId}. Refreshing database states...`);
+        await window.fetchLifetimeMetrics();
+        window.unassignedPinsLayer.clearLayers();
+
+        // WebSocket Hardening
+        if (!window.map.hasLayer(window.routeLayerGroup)) {
+            window.map.addLayer(window.routeLayerGroup); 
+        } 
+        
+        if (!window.liveFleetSocket || window.liveFleetSocket.readyState === WebSocket.CLOSED || window.liveFleetSocket.readyState === WebSocket.CLOSING) {
+            console.log("🔄 Re-establishing dropped Live Fleet telemetry line...");
+            window.connectLiveFleet(); 
+        }
+
+        const btns = document.querySelectorAll('button');
+        btns.forEach(btn => {
+            if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick')?.includes(vehicleId)) {
+                btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
+                btn.style.backgroundColor = "#166534"; 
+                btn.style.cursor = "not-allowed";
+                btn.disabled = true;
+            }
+        });
+
+        newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
+
     } catch (err) {
         newTab.close(); 
-        console.error("Deployment Error:", err);
+        console.error("Critical Synchronization Error:", err);
         alert(`❌ Deployment Failed!\n\n${err.message}`);
     }
 };
@@ -512,7 +503,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.3 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.4 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
