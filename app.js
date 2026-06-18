@@ -18,6 +18,7 @@
 // v2.3.3: Global Handler Hoisting Patch (Resolved Bootloader TypeError).
 // v2.3.4: Survey-Grade Math & Sync: Implemented strict await/async Promise chains for /dispatch and high-precision Float64 UI rendering. 
 // v2.3.5: Survey-Grade Telemetry & Finance: Added N1,300 fuel multiplier, 800ms DB transaction buffer, and rigorous WS coordinate parsing to fix zero-outs and missing markers.
+// v2.3.6: Smooth Telemetry & Distance-based Sync: Injected hardware-accelerated CSS transitions for gliding fleet markers and enforced 1000 z-index stacking.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -281,18 +282,31 @@ window.connectLiveFleet = function() {
             }
         }
 
+        // --- THE UI FIX: Smooth Glide Interpolation ---
         if (window.liveMarkers[data.vehicle_id]) {
-            window.liveMarkers[data.vehicle_id].setLatLng([data.lat, data.lon]);
+            const marker = window.liveMarkers[data.vehicle_id];
+            
+            // Inject CSS transition directly into the marker's DOM element for smooth sliding
+            const el = marker.getElement();
+            if (el) {
+                el.style.transition = 'transform 1.2s linear';
+            }
+            
+            // Move marker and force it to the top so it doesn't hide under the route line
+            marker.setLatLng([data.lat, data.lon]);
+            marker.setZIndexOffset(1000); 
+
         } else {
             // 1. Check Shared Registry first, fallback to string matching
             const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
                            ? window.fleetRegistry[data.vehicle_id] 
                            : String(data.vehicle_id).toLowerCase().includes('bike');
                            
-            // 2. Use Factory Method
+            // 2. Use Factory Method & elevate Z-index immediately
             window.liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
                 icon: window.createLiveIcon(data.vehicle_id, isBike), 
-                pane: 'poiPane'
+                pane: 'poiPane',
+                zIndexOffset: 1000
             }).addTo(window.map);
         }
         
@@ -510,7 +524,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.5 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.6 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
