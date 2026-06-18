@@ -17,6 +17,7 @@
 // v2.3.2: 100% Survey-Grade Scope Extraction (Decoupled Global Handlers from Bootloader).
 // v2.3.3: Global Handler Hoisting Patch (Resolved Bootloader TypeError).
 // v2.3.4: Survey-Grade Math & Sync: Implemented strict await/async Promise chains for /dispatch and high-precision Float64 UI rendering. 
+// v2.3.5: Survey-Grade Telemetry & Finance: Added N1,300 fuel multiplier, 800ms DB transaction buffer, and rigorous WS coordinate parsing to fix zero-outs and missing markers.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -79,9 +80,9 @@ window.fetchLifetimeMetrics = async function() {
 
         if (response.ok) {
             const data = await response.json();
-            window.lifetimeStats.fuel = data.total_fuel_saved || 0;
-            window.lifetimeStats.co2 = data.total_co2_saved || 0;
-            window.lifetimeStats.efficiency = data.avg_efficiency || 0;
+            window.lifetimeStats.fuel = parseFloat(data.total_fuel_saved ?? data.lifetime_fuel ?? data.fuel_saved ?? 0) || 0;
+            window.lifetimeStats.co2 = parseFloat(data.total_co2_saved ?? data.lifetime_co2 ?? data.co2_saved_kg ?? 0) || 0;
+            window.lifetimeStats.efficiency = parseFloat(data.avg_efficiency ?? data.efficiency ?? 0) || 0;
             window.updateBIMetrics(false);
         }
     } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
@@ -93,43 +94,41 @@ window.updateBIMetrics = function(isSession = false) {
     const statCo2El = document.getElementById('stat-co2');
 
     const pe = window.currentPhysicsEngine || {};
-    // Example rate multiplier: Replace 800 with actual fuel price per liter if pe.fuel_saved is in liters. 
-    // If it is already returned in Naira, set this to 1.
-    const MULTIPLIER = 1; 
+    const PUMP_PRICE_PER_LITER = 1300; 
 
     if (isSession) {
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-            const sessionFuelValue = (Number(pe.fuel_saved) || 0) * MULTIPLIER;
+            const sessionFuelValue = (parseFloat(pe.fuel_saved) || 0) * PUMP_PRICE_PER_LITER;
             statFuelEl.innerText = `₦${sessionFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#fbbf24"; 
         }
         if (statEffEl) {
             statEffEl.previousElementSibling.innerText = "Session Efficiency";
-            statEffEl.innerText = `${(Number(pe.efficiency) || 0).toFixed(1)}%`;
+            statEffEl.innerText = `${(parseFloat(pe.efficiency) || 0).toFixed(1)}%`;
             statEffEl.style.color = "#fbbf24";
         }
         if (statCo2El) {
             statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
-            statCo2El.innerText = `${(Number(pe.co2_saved) || 0).toFixed(2)} kg`;
+            statCo2El.innerText = `${(parseFloat(pe.co2_saved) || 0).toFixed(2)} kg`;
             statCo2El.style.color = "#fbbf24";
         }
     } else {
         // --- LIFETIME STATS (Blue/Green/Red) ---
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
-            const lifeFuelValue = (Number(window.lifetimeStats.fuel) || 0) * MULTIPLIER;
+            const lifeFuelValue = (parseFloat(window.lifetimeStats.fuel) || 0) * PUMP_PRICE_PER_LITER;
             statFuelEl.innerText = `₦${lifeFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#4ade80"; 
         }
         if (statEffEl) {
             statEffEl.previousElementSibling.innerText = "Avg Efficiency";
-            statEffEl.innerText = `${(Number(window.lifetimeStats.efficiency) || 0).toFixed(1)}%`;
+            statEffEl.innerText = `${(parseFloat(window.lifetimeStats.efficiency) || 0).toFixed(1)}%`;
             statEffEl.style.color = "#60a5fa"; 
         }
         if (statCo2El) {
             statCo2El.previousElementSibling.innerText = "Lifetime CO2";
-            statCo2El.innerText = `${(Number(window.lifetimeStats.co2) || 0).toFixed(1)} kg`;
+            statCo2El.innerText = `${(parseFloat(window.lifetimeStats.co2) || 0).toFixed(1)} kg`;
             statCo2El.style.color = "#f87171"; 
         }
     }
@@ -170,17 +169,17 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         const coords = window.activeDeployments[vehicleId];
         if (!coords) throw new Error("Route coordinates missing from memory.");
         
-        // Survey-Grade Payload: Strict Number Coercion and raw floats. 
+        const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
         const peRaw = window.currentPhysicsEngine || {};
+        
         const payload = {
-            vehicle_id: vehicleId,
+            vehicle_id: String(vehicleId),
             route_coords: coords,
-            fuel_saved: Number(peRaw.fuel_saved) || 0, 
-            co2_saved: Number(peRaw.co2_saved) || 0,
-            efficiency: Number(peRaw.efficiency) || 0
+            fuel_saved: safeFloat(peRaw.fuel_saved), 
+            co2_saved: safeFloat(peRaw.co2_saved),
+            efficiency: safeFloat(peRaw.efficiency)
         };
         
-        // Asynchronous Promise Chain starts here
         const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
             method: 'POST',
             headers: { 
@@ -195,9 +194,11 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
         }
 
-        // Execution strictly halts here until POST is resolved
-        console.log(`✅ Mission Deploy Success: ${vehicleId}. Refreshing database states...`);
+        console.log(`✅ Mission Deploy Success: ${vehicleId}. Awaiting Database Commit...`);
+        
+        await new Promise(resolve => setTimeout(resolve, 800));
         await window.fetchLifetimeMetrics();
+        
         window.unassignedPinsLayer.clearLayers();
 
         // WebSocket Hardening
@@ -236,8 +237,11 @@ window.connectLiveFleet = function() {
     window.liveFleetSocket.onmessage = async function(event) {
         const data = JSON.parse(event.data);
         
-        if (typeof data.lat === 'undefined' || typeof data.lon === 'undefined') {
-            if (data.status === 'completed') {
+        const markerLat = parseFloat(data.lat ?? data.latitude);
+        const markerLon = parseFloat(data.lon ?? data.longitude);
+
+        if (isNaN(markerLat) || isNaN(markerLon)) {
+            if (data.status === 'completed' && data.vehicle_id) {
                 console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
                 if (window.liveMarkers[data.vehicle_id]) {
                     window.map.removeLayer(window.liveMarkers[data.vehicle_id]);
@@ -246,6 +250,9 @@ window.connectLiveFleet = function() {
             }
             return; 
         }
+
+        data.lat = markerLat;
+        data.lon = markerLon;
 
         if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
             console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
@@ -503,7 +510,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.4 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.5 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
