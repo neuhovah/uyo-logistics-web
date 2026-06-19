@@ -19,6 +19,7 @@
 // v2.3.4: Survey-Grade Math & Sync: Implemented strict await/async Promise chains for /dispatch and high-precision Float64 UI rendering. 
 // v2.3.5: Survey-Grade Telemetry & Finance: Added N1,300 fuel multiplier, 800ms DB transaction buffer, and rigorous WS coordinate parsing to fix zero-outs and missing markers.
 // v2.3.6: Smooth Telemetry & Distance-based Sync: Injected hardware-accelerated CSS transitions for gliding fleet markers and enforced 1000 z-index stacking.
+// v2.3.7: SURCON Telemetry Calibration: Synchronized interpolation frames to 667ms to match the 1.5Hz WebSocket broadcast frequency and distance-based metric parity.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -282,14 +283,14 @@ window.connectLiveFleet = function() {
             }
         }
 
-        // --- THE UI FIX: Smooth Glide Interpolation ---
+        // --- THE UI FIX: Smooth Glide Interpolation (Calibrated to 1.5Hz SURCON metric) ---
         if (window.liveMarkers[data.vehicle_id]) {
             const marker = window.liveMarkers[data.vehicle_id];
             
-            // Inject CSS transition directly into the marker's DOM element for smooth sliding
+            // Inject CSS transition precisely matched to the 667ms WebSocket interval
             const el = marker.getElement();
             if (el) {
-                el.style.transition = 'transform 1.2s linear';
+                el.style.transition = 'transform 667ms linear';
             }
             
             // Move marker and force it to the top so it doesn't hide under the route line
@@ -524,7 +525,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.6 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.7 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -1170,7 +1171,7 @@ function bootCommandCenter() {
             
             window.latestOptimizationResult = data;
             
-            // Sync physics_engine to global state for proportional dispatch (PATCHED)
+            // Sync physics_engine to global state for proportional dispatch
             const peRaw = data.physics_engine || {};
             window.currentPhysicsEngine = {
                 fuel_saved: Number(peRaw.fuel_saved) || 0,
