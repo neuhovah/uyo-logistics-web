@@ -20,6 +20,7 @@
 // v2.3.5: Survey-Grade Telemetry & Finance: Added N1,300 fuel multiplier, 800ms DB transaction buffer, and rigorous WS coordinate parsing to fix zero-outs and missing markers.
 // v2.3.6: Smooth Telemetry & Distance-based Sync: Injected hardware-accelerated CSS transitions for gliding fleet markers and enforced 1000 z-index stacking.
 // v2.3.7: SURCON Telemetry Calibration: Synchronized interpolation frames to 667ms to match the 1.5Hz WebSocket broadcast frequency and distance-based metric parity.
+// v2.3.8: 60FPS Interpolation Engine: Replaced conflicting CSS transitions with requestAnimationFrame JS tweening (.slideTo) for perfect survey-grade marker gliding.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -40,6 +41,42 @@ window.map = null;
 window.routeLayerGroup = null;
 window.unassignedPinsLayer = null;
 window.liveFleetSocket = null;
+
+// --- 0.1 TELEMETRY INTERPOLATION ENGINE (SURCON STANDARD) ---
+// Extends Leaflet Marker to natively support hardware-accelerated 60FPS gliding
+L.Marker.include({
+    slideTo: function(destination, durationMs) {
+        if (!this._map) return;
+        
+        const start = this.getLatLng();
+        const end = L.latLng(destination);
+        const startTime = performance.now();
+        
+        // Cancel any existing animation frame to prevent jitter
+        if (this._slideFrame) {
+            cancelAnimationFrame(this._slideFrame);
+        }
+        
+        const animate = (currentTime) => {
+            const elapsed = currentTime - startTime;
+            // Progress from 0.0 to 1.0
+            const progress = Math.min(elapsed / durationMs, 1);
+            
+            // Linear interpolation (Lerp) for Lat and Lng
+            const currentLat = start.lat + (end.lat - start.lat) * progress;
+            const currentLng = start.lng + (end.lng - start.lng) * progress;
+            
+            this.setLatLng([currentLat, currentLng]);
+            
+            // Continue animation loop until progress is 100%
+            if (progress < 1) {
+                this._slideFrame = requestAnimationFrame(animate);
+            }
+        };
+        
+        this._slideFrame = requestAnimationFrame(animate);
+    }
+});
 
 // ==============================================================================
 // --- EXTRACTED GLOBAL HANDLERS (SURVEY-GRADE DECOUPLING) ---
@@ -283,18 +320,20 @@ window.connectLiveFleet = function() {
             }
         }
 
-        // --- THE UI FIX: Smooth Glide Interpolation (Calibrated to 1.5Hz SURCON metric) ---
+        // --- THE UI FIX: Hardware-Accelerated 60FPS JS Interpolation ---
         if (window.liveMarkers[data.vehicle_id]) {
             const marker = window.liveMarkers[data.vehicle_id];
             
-            // Inject CSS transition precisely matched to the 667ms WebSocket interval
+            // Strip any conflicting CSS transitions that fight Leaflet's coordinate engine
             const el = marker.getElement();
             if (el) {
-                el.style.transition = 'transform 667ms linear';
+                el.style.transition = 'none'; 
             }
             
-            // Move marker and force it to the top so it doesn't hide under the route line
-            marker.setLatLng([data.lat, data.lon]);
+            // Execute the 60FPS mathematical tween over the exact 667ms WebSocket window
+            marker.slideTo([data.lat, data.lon], 667);
+            
+            // Force marker to top layer
             marker.setZIndexOffset(1000); 
 
         } else {
@@ -525,7 +564,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.7 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.3.8 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
