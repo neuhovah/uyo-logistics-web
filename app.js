@@ -550,9 +550,9 @@ function bootCommandCenter() {
 
     const uyoCenter = [5.0377, 7.9128];
 
-    const uyoMathematicalBounds = L.latLngBounds(
-        L.latLng(4.9000, 7.8000), 
-        L.latLng(5.1500, 8.1000)  
+   const uyoMathematicalBounds = L.latLngBounds(
+        L.latLng(4.8000, 7.7000), 
+        L.latLng(5.2500, 8.2000)  
     );
 
     const darkMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
