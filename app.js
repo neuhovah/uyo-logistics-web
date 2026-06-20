@@ -4,23 +4,9 @@
 // ==============================================================================
 //
 // 📋 CHANGELOG
-// v2.0.1 - 2.2.2: Legacy UI & Cartographic Parity Updates.
-// v2.2.3: Fleet Telemetry & Multi-Dimensional Capacity Sync.
-// v2.2.4: Unified Carbon Calculus - Absolute parity between Session & Telemetry metrics.
-// v2.2.5: Enterprise Telemetry - Dynamic Call Sign Badges & Fleet Color Parity.
-// v2.2.6: Dynamic Emojis - Complete Cartographic Parity across Routes & Live Telemetry.
-// v2.2.7: Fleet Registry Sync - Absolute Parity between Routing Engine and Telemetry Widgets.
-// v2.2.8: Persistent State & Telemetry Factory Patch - Prevents State-Loss on Recalculation.
-// v2.2.9: Dispatch Payload Sync & Socket Reconnection Fixes - Ensures 100% accurate lifetime metric logging.
-// v2.3.0: Centralized Physics Engine Sync & WS Race Condition Patch.
-// v2.3.1: Null-Safety & Defensive Data Parsing Patch (Resolves .toFixed undefined TypeErrors).
-// v2.3.2: 100% Survey-Grade Scope Extraction (Decoupled Global Handlers from Bootloader).
-// v2.3.3: Global Handler Hoisting Patch (Resolved Bootloader TypeError).
-// v2.3.4: Survey-Grade Math & Sync: Implemented strict await/async Promise chains for /dispatch and high-precision Float64 UI rendering. 
-// v2.3.5: Survey-Grade Telemetry & Finance: Added N1,300 fuel multiplier, 800ms DB transaction buffer, and rigorous WS coordinate parsing to fix zero-outs and missing markers.
-// v2.3.6: Smooth Telemetry & Distance-based Sync: Injected hardware-accelerated CSS transitions for gliding fleet markers and enforced 1000 z-index stacking.
-// v2.3.7: SURCON Telemetry Calibration: Synchronized interpolation frames to 667ms to match the 1.5Hz WebSocket broadcast frequency and distance-based metric parity.
-// v2.3.8: 60FPS Interpolation Engine: Replaced conflicting CSS transitions with requestAnimationFrame JS tweening (.slideTo) for perfect survey-grade marker gliding.
+// v2.3.8: 60FPS Interpolation Engine: Replaced conflicting CSS transitions with requestAnimationFrame JS tweening (.slideTo).
+// v2.3.9: Telemetry Diagnostic Patch: Injected WebSocket interceptor to debug ghost markers.
+// v2.4.0: SURCON Enterprise Telemetry Sync: Patched defensive payload mapper to strictly reference nested telemetry objects, resolving undefined status/deviation reference bugs.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -43,7 +29,6 @@ window.unassignedPinsLayer = null;
 window.liveFleetSocket = null;
 
 // --- 0.1 TELEMETRY INTERPOLATION ENGINE (SURCON STANDARD) ---
-// Extends Leaflet Marker to natively support hardware-accelerated 60FPS gliding
 L.Marker.include({
     slideTo: function(destination, durationMs) {
         if (!this._map) return;
@@ -52,23 +37,19 @@ L.Marker.include({
         const end = L.latLng(destination);
         const startTime = performance.now();
         
-        // Cancel any existing animation frame to prevent jitter
         if (this._slideFrame) {
             cancelAnimationFrame(this._slideFrame);
         }
         
         const animate = (currentTime) => {
             const elapsed = currentTime - startTime;
-            // Progress from 0.0 to 1.0
             const progress = Math.min(elapsed / durationMs, 1);
             
-            // Linear interpolation (Lerp) for Lat and Lng
             const currentLat = start.lat + (end.lat - start.lat) * progress;
             const currentLng = start.lng + (end.lng - start.lng) * progress;
             
             this.setLatLng([currentLat, currentLng]);
             
-            // Continue animation loop until progress is 100%
             if (progress < 1) {
                 this._slideFrame = requestAnimationFrame(animate);
             }
@@ -153,7 +134,6 @@ window.updateBIMetrics = function(isSession = false) {
             statCo2El.style.color = "#fbbf24";
         }
     } else {
-        // --- LIFETIME STATS (Blue/Green/Red) ---
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
             const lifeFuelValue = (parseFloat(window.lifetimeStats.fuel) || 0) * PUMP_PRICE_PER_LITER;
@@ -240,7 +220,6 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         
         window.unassignedPinsLayer.clearLayers();
 
-        // WebSocket Hardening
         if (!window.map.hasLayer(window.routeLayerGroup)) {
             window.map.addLayer(window.routeLayerGroup); 
         } 
@@ -274,35 +253,45 @@ window.connectLiveFleet = function() {
     window.liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
     
     window.liveFleetSocket.onmessage = async function(event) {
-        const data = JSON.parse(event.data);
+        let rawData;
+        try {
+            rawData = JSON.parse(event.data);
+        } catch (e) {
+            console.error("Failed to parse WebSocket JSON:", event.data);
+            return;
+        }
         
-        const markerLat = parseFloat(data.lat ?? data.latitude);
-        const markerLon = parseFloat(data.lon ?? data.longitude);
+        console.log(`🔥 RAW WS PING [${new Date().toISOString()}]:`, rawData);
 
-        if (isNaN(markerLat) || isNaN(markerLon)) {
-            if (data.status === 'completed' && data.vehicle_id) {
-                console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
-                if (window.liveMarkers[data.vehicle_id]) {
-                    window.map.removeLayer(window.liveMarkers[data.vehicle_id]);
-                    delete window.liveMarkers[data.vehicle_id];
+        // --- 🔴 SURVEY-GRADE FIX: Strict Payload Extraction ---
+        // We now enforce the use of `payload` exclusively to avoid undefined reference errors
+        const payload = rawData.telemetry ? rawData.telemetry : rawData;
+        const vId = payload.vehicle_id || payload.id;
+
+        const markerLat = parseFloat(payload.lat ?? payload.latitude);
+        const markerLon = parseFloat(payload.lon ?? payload.longitude);
+
+        if (isNaN(markerLat) || isNaN(markerLon) || !vId) {
+            if (payload.status === 'completed' && vId) {
+                console.log(`🏁 Mission Completed for ${vId}`); 
+                if (window.liveMarkers[vId]) {
+                    window.map.removeLayer(window.liveMarkers[vId]);
+                    delete window.liveMarkers[vId];
                 }
             }
             return; 
         }
 
-        data.lat = markerLat;
-        data.lon = markerLon;
-
-        if (!window.activeDeployments[data.vehicle_id] && data.status !== 'completed') {
-            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${data.vehicle_id}...`);
+        if (!window.activeDeployments[vId] && payload.status !== 'completed') {
+            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${vId}...`);
             try {
                 const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
                     headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
                 });
                 const syncData = await syncRes.json();
                 
-                if (syncData.active_missions && syncData.active_missions[data.vehicle_id]) {
-                    const coords = syncData.active_missions[data.vehicle_id].coords;
+                if (syncData.active_missions && syncData.active_missions[vId]) {
+                    const coords = syncData.active_missions[vId].coords;
                     
                     L.polyline(coords, { 
                         color: '#f59e0b', 
@@ -312,48 +301,42 @@ window.connectLiveFleet = function() {
                         pane: 'routePane' 
                     }).addTo(window.routeLayerGroup);
                     
-                    window.activeDeployments[data.vehicle_id] = coords;
-                    console.log(`✅ Global Sync Complete: Route drawn for ${data.vehicle_id}`);
+                    window.activeDeployments[vId] = coords;
+                    console.log(`✅ Global Sync Complete: Route drawn for ${vId}`);
                 }
             } catch (err) {
                 console.warn("Global Sync Failed:", err);
             }
         }
 
-        // --- THE UI FIX: Hardware-Accelerated 60FPS JS Interpolation ---
-        if (window.liveMarkers[data.vehicle_id]) {
-            const marker = window.liveMarkers[data.vehicle_id];
+        // --- Hardware-Accelerated 60FPS JS Interpolation ---
+        if (window.liveMarkers[vId]) {
+            const marker = window.liveMarkers[vId];
             
-            // Strip any conflicting CSS transitions that fight Leaflet's coordinate engine
             const el = marker.getElement();
             if (el) {
                 el.style.transition = 'none'; 
             }
             
-            // Execute the 60FPS mathematical tween over the exact 667ms WebSocket window
-            marker.slideTo([data.lat, data.lon], 667);
-            
-            // Force marker to top layer
+            marker.slideTo([markerLat, markerLon], 667);
             marker.setZIndexOffset(1000); 
 
         } else {
-            // 1. Check Shared Registry first, fallback to string matching
-            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
-                           ? window.fleetRegistry[data.vehicle_id] 
-                           : String(data.vehicle_id).toLowerCase().includes('bike');
+            const isBike = window.fleetRegistry[vId] !== undefined 
+                           ? window.fleetRegistry[vId] 
+                           : String(vId).toLowerCase().includes('bike');
                            
-            // 2. Use Factory Method & elevate Z-index immediately
-            window.liveMarkers[data.vehicle_id] = L.marker([data.lat, data.lon], {
-                icon: window.createLiveIcon(data.vehicle_id, isBike), 
+            window.liveMarkers[vId] = L.marker([markerLat, markerLon], {
+                icon: window.createLiveIcon(vId, isBike), 
                 pane: 'poiPane',
                 zIndexOffset: 1000
             }).addTo(window.map);
         }
         
-        // 3. Deviation Alert Override
-        if (data.deviation_alert) {
-            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
-            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+        // --- Strict Deviation Alert Mapping ---
+        if (payload.deviation_alert) {
+            const dotEl = document.getElementById(`ping-dot-${vId}`);
+            const badgeEl = document.getElementById(`ping-badge-${vId}`);
             if (dotEl && badgeEl) {
                 dotEl.style.background = '#f97316'; 
                 dotEl.style.boxShadow = '0 0 25px #f97316';
@@ -361,15 +344,14 @@ window.connectLiveFleet = function() {
                 badgeEl.style.border = '1px solid #f97316';
                 badgeEl.style.color = '#f97316';
             }
-            console.warn(`🚨 CRITICAL: ${data.vehicle_id} has deviated from the optimized route!`);
+            console.warn(`🚨 CRITICAL: ${vId} has deviated from the optimized route!`);
         } else {
-            // Restore normal colors if they get back on track
-            const isBike = window.fleetRegistry[data.vehicle_id] !== undefined 
-                           ? window.fleetRegistry[data.vehicle_id] 
-                           : String(data.vehicle_id).toLowerCase().includes('bike');
+            const isBike = window.fleetRegistry[vId] !== undefined 
+                           ? window.fleetRegistry[vId] 
+                           : String(vId).toLowerCase().includes('bike');
             const markerColor = isBike ? '#28a745' : '#dc3545';
-            const dotEl = document.getElementById(`ping-dot-${data.vehicle_id}`);
-            const badgeEl = document.getElementById(`ping-badge-${data.vehicle_id}`);
+            const dotEl = document.getElementById(`ping-dot-${vId}`);
+            const badgeEl = document.getElementById(`ping-badge-${vId}`);
             if (dotEl && badgeEl) {
                 dotEl.style.background = markerColor; 
                 dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
@@ -379,8 +361,8 @@ window.connectLiveFleet = function() {
             }
         }
         
-        if (data.status === 'completed') { 
-            console.log(`🏁 Mission Completed for ${data.vehicle_id}`); 
+        if (payload.status === 'completed') { 
+            console.log(`🏁 Mission Completed for ${vId}`); 
         }
     };
     window.liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
@@ -564,7 +546,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.3.8 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.4.0 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -1097,7 +1079,6 @@ function bootCommandCenter() {
 
     // --- UYO COMMAND CENTER TELEMETRY WIDGET HANDLER ---
     window.updateTelemetryUI = function(apiResponse) {
-        // Parse Traffic Status
         const trafficMultiplier = apiResponse.traffic_multiplier || 1.0;
         const trafficText = document.getElementById('traffic-text');
         const indicator = document.getElementById('traffic-indicator');
@@ -1112,7 +1093,6 @@ function bootCommandCenter() {
             }
         }
 
-        // Consume backend physics_engine, entirely bypassing frontend math
         const peRaw = apiResponse.physics_engine || {};
         const pe = {
             fuel_saved: Number(peRaw.fuel_saved) || 0,
@@ -1131,7 +1111,6 @@ function bootCommandCenter() {
 
         const timeSavedMins = Math.max(0, empiricalBaselineMins - totalOptimizedMins);
         
-        // Update DOM
         const timeSavedEl = document.getElementById('time-saved-val');
         const co2SavedEl = document.getElementById('co2-saved-val');
         
@@ -1210,7 +1189,6 @@ function bootCommandCenter() {
             
             window.latestOptimizationResult = data;
             
-            // Sync physics_engine to global state for proportional dispatch
             const peRaw = data.physics_engine || {};
             window.currentPhysicsEngine = {
                 fuel_saved: Number(peRaw.fuel_saved) || 0,
@@ -1218,7 +1196,6 @@ function bootCommandCenter() {
                 efficiency: Number(peRaw.efficiency) || 0
             };
             
-            // Trigger Telemetry Widget
             window.updateTelemetryUI(data);
             
             window.routeLayerGroup.clearLayers(); 
@@ -1302,7 +1279,6 @@ function bootCommandCenter() {
             
             const isBike = vType.toLowerCase() === 'bike';
             
-            // SAVE TO SHARED MEMORY FOR TELEMETRY
             window.fleetRegistry[vId] = isBike; 
 
             const color = isBike ? '#28a745' : '#dc3545';
@@ -1342,7 +1318,7 @@ function bootCommandCenter() {
 
                     const routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
                     window.activeDeployments[vId] = routeCoords;
-                    window.activeDeploymentsMins[vId] = parseFloat(durationMin); // Save for proportional math
+                    window.activeDeploymentsMins[vId] = parseFloat(durationMin);
 
                     const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(window.routeLayerGroup);
                     
