@@ -7,6 +7,7 @@
 // v2.3.8: 60FPS Interpolation Engine: Replaced conflicting CSS transitions with requestAnimationFrame JS tweening (.slideTo).
 // v2.3.9: Telemetry Diagnostic Patch: Injected WebSocket interceptor to debug ghost markers.
 // v2.4.0: SURCON Enterprise Telemetry Sync: Patched defensive payload mapper to strictly reference nested telemetry objects, resolving undefined status/deviation reference bugs.
+// v2.4.1: Cartographic Expansion & Matrix Parity: Expanded Google Places API bounds and strictly enforced mathematical geofencing on map-clicks to match backend matrix expansion (Lat 4.80-5.25, Lon 7.70-8.20).
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -263,8 +264,6 @@ window.connectLiveFleet = function() {
         
         console.log(`🔥 RAW WS PING [${new Date().toISOString()}]:`, rawData);
 
-        // --- 🔴 SURVEY-GRADE FIX: Strict Payload Extraction ---
-        // We now enforce the use of `payload` exclusively to avoid undefined reference errors
         const payload = rawData.telemetry ? rawData.telemetry : rawData;
         const vId = payload.vehicle_id || payload.id;
 
@@ -546,11 +545,12 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.4.0 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.4.1 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
-   const uyoMathematicalBounds = L.latLngBounds(
+    // 🔴 SURVEY-GRADE FIX: Frontend bounds perfectly synced to vrp.py matrix
+    const uyoMathematicalBounds = L.latLngBounds(
         L.latLng(4.8000, 7.7000), 
         L.latLng(5.2500, 8.2000)  
     );
@@ -790,17 +790,11 @@ function bootCommandCenter() {
         console.log(`🗑️ Removed Drop: ${dropId}`);
     };
 
-    // --- PARCEL WEIGHT INTERCEPTION ON MAP CLICK ---
+    // --- 🔴 SURVEY-GRADE FIX: Strict Mathematical Interception ---
+    // Removed dependency on GeoJSON boundaryLayer to prevent "click-trap" bugs.
     window.map.on('click', function(e) {
-        let isInside = false;
-        if (boundaryLayer.getLayers().length > 0 && boundaryLayer.getLayers()[0].getBounds) {
-            isInside = boundaryLayer.getLayers()[0].getBounds().contains(e.latlng);
-        } else {
-            isInside = uyoMathematicalBounds.contains(e.latlng);
-        }
-
-        if (!isInside) { 
-            alert("⚠️ Location is outside the Uyo service boundary."); 
+        if (!uyoMathematicalBounds.contains(e.latlng)) { 
+            alert("⚠️ Location is outside the Uyo operational geofence (Lat 4.80-5.25, Lon 7.70-8.20)."); 
             return; 
         }
         
@@ -918,8 +912,9 @@ function bootCommandCenter() {
                 }).catch(err => console.warn("Nominatim failed:", err))
             );
 
+            // 🔴 SURVEY-GRADE FIX: Expanded Google API Restriction Bounds
             const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
-            const locationRestriction = { rectangle: { low: { latitude: 4.9500, longitude: 7.8500 }, high: { latitude: 5.1000, longitude: 8.0500 } } };
+            const locationRestriction = { rectangle: { low: { latitude: 4.8000, longitude: 7.7000 }, high: { latitude: 5.2500, longitude: 8.2000 } } };
             
             searchPromises.push(
                 fetch(`https://places.googleapis.com/v1/places:searchText`, {
