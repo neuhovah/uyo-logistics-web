@@ -9,6 +9,7 @@
 // v2.4.0: SURCON Enterprise Telemetry Sync: Patched defensive payload mapper to strictly reference nested telemetry objects, resolving undefined status/deviation reference bugs.
 // v2.4.1: Cartographic Expansion & Matrix Parity: Expanded Google Places API bounds and strictly enforced mathematical geofencing on map-clicks to match backend matrix expansion (Lat 4.80-5.25, Lon 7.70-8.20).
 // v2.4.2: Survey-Grade Sync: Removed redundant UI pump price multiplication & switched to explicit backend time_saved_mins ingestion to resolve 0.0 mins bug.
+// v2.4.3: Telemetry Lock Patch: Introduced window.sessionMetricsCommitted state lock to prevent database metric duplication on multi-vehicle dispatch.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -20,6 +21,7 @@ window.activeDeployments = {};
 window.activeDeploymentsMins = {}; 
 window.currentPhysicsEngine = {};
 window.lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
+window.sessionMetricsCommitted = false; // 🔴 ADDED: Single-Commit Telemetry Lock
 
 window.depotLocation = { lat: 5.0333, lon: 7.9266 };
 window.dynamicDeliveries = [];
@@ -193,12 +195,24 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
         const peRaw = window.currentPhysicsEngine || {};
         
+        // 🔴 ADDED: Apply the Single-Commit Telemetry Lock
+        let dispatchFuel = 0;
+        let dispatchCo2 = 0;
+        let dispatchEff = 0;
+
+        if (!window.sessionMetricsCommitted) {
+            dispatchFuel = safeFloat(peRaw.fuel_saved);
+            dispatchCo2 = safeFloat(peRaw.co2_saved);
+            dispatchEff = safeFloat(peRaw.efficiency);
+            window.sessionMetricsCommitted = true; // Lock telemetry for subsequent vehicles
+        }
+
         const payload = {
             vehicle_id: String(vehicleId),
             route_coords: coords,
-            fuel_saved: safeFloat(peRaw.fuel_saved), 
-            co2_saved: safeFloat(peRaw.co2_saved),
-            efficiency: safeFloat(peRaw.efficiency)
+            fuel_saved: dispatchFuel, 
+            co2_saved: dispatchCo2,
+            efficiency: dispatchEff
         };
         
         const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
@@ -546,7 +560,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.4.2 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.4.3 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -1051,6 +1065,7 @@ function bootCommandCenter() {
         window.activeDeployments = {}; 
         window.activeDeploymentsMins = {};
         window.currentPhysicsEngine = {};
+        window.sessionMetricsCommitted = false; // 🔴 ADDED: Reset the lock to allow new metrics
         
         if (typeof window.liveMarkers !== 'undefined') {
             for (let id in window.liveMarkers) {
@@ -1188,6 +1203,7 @@ function bootCommandCenter() {
             window.unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
             window.activeDeploymentsMins = {};
+            window.sessionMetricsCommitted = false; // 🔴 ADDED: Reset the lock for the new optimization set
 
             let backendOptimizedMins = 0;
             data.routes.forEach(r => {
