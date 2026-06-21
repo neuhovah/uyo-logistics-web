@@ -8,6 +8,7 @@
 // v2.3.9: Telemetry Diagnostic Patch: Injected WebSocket interceptor to debug ghost markers.
 // v2.4.0: SURCON Enterprise Telemetry Sync: Patched defensive payload mapper to strictly reference nested telemetry objects, resolving undefined status/deviation reference bugs.
 // v2.4.1: Cartographic Expansion & Matrix Parity: Expanded Google Places API bounds and strictly enforced mathematical geofencing on map-clicks to match backend matrix expansion (Lat 4.80-5.25, Lon 7.70-8.20).
+// v2.4.2: Survey-Grade Sync: Removed redundant UI pump price multiplication & switched to explicit backend time_saved_mins ingestion to resolve 0.0 mins bug.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -109,18 +110,18 @@ window.fetchLifetimeMetrics = async function() {
     } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
 };
 
+// 🔴 PATCHED: Removed Redundant Fuel Cost Multiplication
 window.updateBIMetrics = function(isSession = false) {
     const statFuelEl = document.getElementById('stat-fuel');
     const statEffEl = document.getElementById('stat-efficiency');
     const statCo2El = document.getElementById('stat-co2');
 
     const pe = window.currentPhysicsEngine || {};
-    const PUMP_PRICE_PER_LITER = 1300; 
 
     if (isSession) {
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
-            const sessionFuelValue = (parseFloat(pe.fuel_saved) || 0) * PUMP_PRICE_PER_LITER;
+            const sessionFuelValue = parseFloat(pe.fuel_saved) || 0; 
             statFuelEl.innerText = `₦${sessionFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#fbbf24"; 
         }
@@ -137,7 +138,7 @@ window.updateBIMetrics = function(isSession = false) {
     } else {
         if (statFuelEl) {
             statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
-            const lifeFuelValue = (parseFloat(window.lifetimeStats.fuel) || 0) * PUMP_PRICE_PER_LITER;
+            const lifeFuelValue = parseFloat(window.lifetimeStats.fuel) || 0; 
             statFuelEl.innerText = `₦${lifeFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#4ade80"; 
         }
@@ -545,7 +546,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.4.1 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.4.2 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -1072,7 +1073,7 @@ function bootCommandCenter() {
         if (reportContainer) reportContainer.style.display = "none";
     };
 
-    // --- UYO COMMAND CENTER TELEMETRY WIDGET HANDLER ---
+    // 🔴 PATCHED: Strictly Map Directly to Sanitized Backend Metrics
     window.updateTelemetryUI = function(apiResponse) {
         const trafficMultiplier = apiResponse.traffic_multiplier || 1.0;
         const trafficText = document.getElementById('traffic-text');
@@ -1090,26 +1091,16 @@ function bootCommandCenter() {
 
         const peRaw = apiResponse.physics_engine || {};
         const pe = {
+            time_saved_mins: Number(peRaw.time_saved_mins) || 0,
             fuel_saved: Number(peRaw.fuel_saved) || 0,
             co2_saved: Number(peRaw.co2_saved) || 0,
             efficiency: Number(peRaw.efficiency) || 0
         };
         
-        const empiricalBaselineMins = Number(apiResponse.empirical_baseline) || 0;
-        let totalOptimizedMins = 0;
-        
-        if (apiResponse.routes && apiResponse.routes.length > 0) {
-            apiResponse.routes.forEach(vehicleRoute => {
-                totalOptimizedMins += (Number(vehicleRoute.total_time_mins) || 0);
-            });
-        }
-
-        const timeSavedMins = Math.max(0, empiricalBaselineMins - totalOptimizedMins);
-        
         const timeSavedEl = document.getElementById('time-saved-val');
         const co2SavedEl = document.getElementById('co2-saved-val');
         
-        if (timeSavedEl) timeSavedEl.innerText = `${timeSavedMins.toFixed(1)} mins`;
+        if (timeSavedEl) timeSavedEl.innerText = `${pe.time_saved_mins.toFixed(1)} mins`;
         if (co2SavedEl) co2SavedEl.innerText = `${pe.co2_saved.toFixed(2)} kg`;
     };
 
