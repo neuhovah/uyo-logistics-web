@@ -110,11 +110,11 @@
             
             if (!userEmail) { alert("⚠️ Please enter a business email for the receipt."); return; }
 
-            // ALIGNED WITH BACKEND TIER LIMITS
+            // ALIGNED WITH NEW VALUE-BASED PRICING TIERS
             let amountKobo, daysToAdd, stopLimit;
-            if (planChoice === "1") { amountKobo = 300000; daysToAdd = 1; stopLimit = 20; }
-            else if (planChoice === "2") { amountKobo = 2500000; daysToAdd = 14; stopLimit = 200; }
-            else if (planChoice === "3") { amountKobo = 7000000; daysToAdd = 30; stopLimit = 600; }
+            if (planChoice === "1") { amountKobo = 100000; daysToAdd = 1; stopLimit = 20; } // ₦1,000
+            else if (planChoice === "2") { amountKobo = 1200000; daysToAdd = 14; stopLimit = 200; } // ₦12,000
+            else if (planChoice === "3") { amountKobo = 3500000; daysToAdd = 30; stopLimit = 600; } // ₦35,000
 
             const handler = PaystackPop.setup({
                 key: 'pk_live_e0c2402108448771f33bbe09670508ede2ad6a92',
@@ -186,9 +186,9 @@
                                     <i class="fa-solid fa-triangle-exclamation text-red-400"></i> License Expired. Renew Below:
                                 </p>
                                 <select id="renew-plan" class="w-full text-xs bg-gray-900 text-white p-2 rounded mb-2 border border-red-800 outline-none focus:border-red-500">
-                                    <option value="1">Daily Pass (20 Stops) - ₦3,000</option>
-                                    <option value="2">Bi-Weekly Pro (200 Stops) - ₦25,000</option>
-                                    <option value="3">Monthly Enterprise (600 Stops) - ₦70,000</option>
+                                    <option value="1">Daily Pass (20 Stops) - ₦1,000</option>
+                                    <option value="2">Bi-Weekly Pro (200 Stops) - ₦12,000</option>
+                                    <option value="3">Monthly Enterprise (600 Stops) - ₦35,000</option>
                                 </select>
                                 <input type="email" id="renew-email" placeholder="Enter Business Email" class="w-full text-xs bg-gray-900 text-white p-2 rounded mb-3 border border-red-800 outline-none focus:border-red-500">
                                 <button onclick="processRenewal('${key}')" class="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-3 rounded shadow transition-all flex justify-center items-center gap-2">
