@@ -72,12 +72,11 @@
         const keyInput = document.getElementById('license-key');
 
         // --- REACTIVE UI OBSERVER ---
-        // Automatically unlocks the button as soon as the user starts typing or pastes a key
         keyInput.addEventListener('input', () => {
             if (loginBtn.innerText === "Check your email to proceed" || loginBtn.disabled || document.getElementById('renew-plan')) {
                 loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
                 loginBtn.disabled = false;
-                loginBtn.style.backgroundColor = ""; // Reset to default blue-600 from CSS
+                loginBtn.style.backgroundColor = "";
                 errorDiv.classList.add('hidden');
             }
         });
@@ -94,7 +93,6 @@
         }
 
         function showError(message) {
-            // Clean out any previous renewal forms before showing a standard error
             errorDiv.innerHTML = message;
             errorDiv.className = "text-red-400 text-xs font-bold text-center bg-red-900/30 p-2 rounded border border-red-800 mt-3";
             errorDiv.classList.remove('hidden');
@@ -104,18 +102,16 @@
         }
 
         // --- 🚨 CRITICAL ENGINE: IN-DOM PAYSTACK RENEWAL ---
-        // This function is triggered by a DIRECT user click, bypassing all browser pop-up blockers
         window.processRenewal = function(expiredKey) {
             const planChoice = document.getElementById('renew-plan').value;
             const userEmail = document.getElementById('renew-email').value.trim();
             
             if (!userEmail) { alert("⚠️ Please enter a business email for the receipt."); return; }
 
-            // ALIGNED WITH NEW VALUE-BASED PRICING TIERS
             let amountKobo, daysToAdd, stopLimit;
-            if (planChoice === "1") { amountKobo = 100000; daysToAdd = 1; stopLimit = 20; } // ₦1,000
-            else if (planChoice === "2") { amountKobo = 1200000; daysToAdd = 14; stopLimit = 200; } // ₦12,000
-            else if (planChoice === "3") { amountKobo = 3500000; daysToAdd = 30; stopLimit = 600; } // ₦35,000
+            if (planChoice === "1") { amountKobo = 100000; daysToAdd = 1; stopLimit = 20; }
+            else if (planChoice === "2") { amountKobo = 1200000; daysToAdd = 14; stopLimit = 200; }
+            else if (planChoice === "3") { amountKobo = 3500000; daysToAdd = 30; stopLimit = 600; }
 
             const handler = PaystackPop.setup({
                 key: 'pk_live_e0c2402108448771f33bbe09670508ede2ad6a92',
@@ -131,14 +127,15 @@
                             reference: response.reference, 
                             license_key: expiredKey,
                             days_to_add: daysToAdd,
-                            stop_limit: stopLimit // <--- Critical payload sync
+                            stop_limit: stopLimit
                         })
                     })
                     .then(res => {
                         if (res.ok) {
                             alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s) with a ${stopLimit}-stop limit.`);
                             localStorage.setItem('uyo_license_key', expiredKey);
-                            window.location.replace("index.html"); 
+                            // CORRECTED REDIRECT: Now points to the secure dashboard
+                            window.location.replace("dashboard.html"); 
                         } else {
                             alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
                         }
@@ -170,17 +167,16 @@
 
                 if (response.ok) {
                     localStorage.setItem('uyo_license_key', key);
-                    window.location.replace("index.html");
+                    // CORRECTED REDIRECT: Now points to the secure dashboard
+                    window.location.replace("dashboard.html");
                 } else {
                     const errorData = await response.json().catch(() => ({}));
                     
-                    // 🚨 THE TRAP: Catch 402 or explicit expiration messages and inject DOM form
                     if (response.status === 402 || (errorData.detail && errorData.detail.toLowerCase().includes('expired'))) {
                         
                         loginBtn.innerHTML = `Initialize Dashboard <i class="fa-solid fa-arrow-right"></i>`;
                         loginBtn.disabled = false;
                         
-                        // Inject the renewal UI directly into the DOM with updated limits and pricing
                         errorDiv.innerHTML = `
                             <div class="text-left mt-2">
                                 <p class="text-white font-bold text-[11px] mb-2 uppercase border-b border-red-800 pb-1">
@@ -197,18 +193,14 @@
                                 </button>
                             </div>
                         `;
-                        // Ensure styling accommodates the new form
                         errorDiv.className = "bg-gray-800 p-3 rounded border border-red-800 mt-4 shadow-inner";
                         errorDiv.classList.remove('hidden');
 
                     } else {
-                        // Throw standard errors (like "Invalid Key") to the catch block
                         throw new Error(errorData.detail || "Access Denied");
                     }
                 }
             } catch (err) {
-                // If the Chrome extension crashes the promise, 'err.message' might be the listener error.
-                // We fallback to a generic message to prevent exposing ugly browser console errors to the user.
                 let displayMsg = err.message;
                 if (displayMsg.includes("listener indicated")) displayMsg = "Network disruption. Please try again.";
                 showError(displayMsg);
