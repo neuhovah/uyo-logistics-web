@@ -23,25 +23,56 @@
     <meta property="twitter:description" content="Optimize your Uyo delivery fleet with our localized routing API. Cut fuel costs and improve dispatch times with hyper-local spatial data.">
     <meta property="twitter:image" content="https://uyologistics.com/preview-image.jpg">
 
+    <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI1MCIgZmlsbD0iIzNiODJmNiIvPjx0ZXh0IHg9IjUwIiB5PSI3MiIgZm9udC1zaXplPSI2NSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCI+VTwvdGV4dD48L3N2Zz4=">
     
+    <!-- External Libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <!-- JSON-LD Structured Data for Local SEO -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Uyo Logistics Solutions API",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web-based, REST API",
+      "description": "Enterprise Fleet Routing & Optimization API exclusively built for the Uyo municipal network.",
+      "url": "https://uyologistics.com",
+      "provider": {
+        "@type": "LocalBusiness",
+        "name": "Uyo Logistics Solutions",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "[INSERT YOUR STREET ADDRESS]",
+          "addressLocality": "Uyo",
+          "addressRegion": "Akwa Ibom",
+          "addressCountry": "NG"
+        },
+        "telephone": "[INSERT YOUR PHONE NUMBER]",
+        "email": "admin@uyologistics.com"
+      }
+    }
+    </script>
 </head>
-<body class="bg-gray-900 text-white font-sans">
+<body class="bg-gray-900 text-white font-sans flex flex-col min-h-screen">
 
     <!-- Public Header -->
     <header class="p-6 bg-gray-800 border-b border-gray-700 flex flex-col md:flex-row justify-between items-center gap-4">
         <div class="text-center md:text-left">
             <div class="text-xl md:text-2xl font-bold text-blue-400 uppercase tracking-tighter">Uyo Logistics Solutions</div>
         </div>
-        <!-- This button points existing users to the secure dashboard or login -->
+        <!-- Button pointing to the secure client dashboard -->
         <a href="login.html" class="bg-blue-600 hover:bg-blue-500 text-sm px-6 py-2 rounded-lg font-bold transition">
             Client Login
         </a>
     </header>
 
     <!-- SEO Optimized Body Content -->
-    <main class="max-w-4xl mx-auto p-6 md:p-12 mt-8">
+    <main class="max-w-4xl mx-auto p-6 md:p-12 mt-8 flex-grow">
+        
+        <!-- Hero Section -->
         <h1 class="text-3xl md:text-5xl font-black mb-6 leading-tight text-gray-100">
             Enterprise Fleet Routing & Optimization for Uyo
         </h1>
@@ -49,7 +80,8 @@
             Survey-grade spatial infrastructure to cut delivery fuel costs and automate dispatch routing across the Uyo municipal network.
         </h2>
         
-        <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 shadow-2xl">
+        <!-- Value Proposition Section -->
+        <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 shadow-2xl mb-8">
             <h3 class="text-sm font-bold uppercase tracking-widest text-gray-500 mb-4">About the Engine</h3>
             <p class="text-base text-gray-300 leading-relaxed mb-6">
                 Uyo Logistics Solutions provides an autonomous, high-precision routing API built strictly for enterprise delivery fleets operating within Uyo. Generic, continental-scale map APIs fail to account for hyper-local geometric realities and vehicle-specific constraints, resulting in inaccurate ETAs and wasted fuel.
@@ -59,13 +91,53 @@
             </p>
         </div>
 
-        <div class="mt-12 text-center border-t border-gray-800 pt-8">
+        <!-- SEO Keyword-Rich Process Section -->
+        <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 shadow-2xl">
+            <h3 class="text-sm font-bold uppercase tracking-widest text-gray-500 mb-8 text-center md:text-left">How It Works</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div class="text-center md:text-left">
+                    <div class="text-blue-500 text-3xl mb-3"><i class="fa-solid fa-code"></i></div>
+                    <h4 class="font-bold text-gray-100 mb-2">1. Connect via API</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">Integrate our REST API endpoints directly into your existing dispatch dashboard with zero disruption to your current workflow.</p>
+                </div>
+                <div class="text-center md:text-left">
+                    <div class="text-blue-500 text-3xl mb-3"><i class="fa-solid fa-map-location-dot"></i></div>
+                    <h4 class="font-bold text-gray-100 mb-2">2. Send Coordinates</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">Push your daily delivery nodes. We calculate permutations instantly using Uyo's exact municipal road geometries.</p>
+                </div>
+                <div class="text-center md:text-left">
+                    <div class="text-blue-500 text-3xl mb-3"><i class="fa-solid fa-route"></i></div>
+                    <h4 class="font-bold text-gray-100 mb-2">3. Optimize Fleets</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">Receive survey-grade route sequences back in sub-100ms to immediately dispatch your fleet and save on fuel.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Call to Action -->
+        <div class="mt-12 text-center pt-4">
             <p class="text-sm text-gray-500 uppercase tracking-widest font-bold mb-4">Start a Pilot Integration</p>
-            <a href="mailto:admin@uyologistics.com" class="text-blue-400 hover:text-blue-300 font-bold transition">
+            <a href="mailto:admin@uyologistics.com" class="inline-block bg-gray-800 hover:bg-gray-700 border border-gray-600 text-blue-400 px-6 py-3 rounded-lg font-bold transition shadow-lg">
                 <i class="fa-solid fa-envelope mr-2"></i> admin@uyologistics.com
             </a>
         </div>
     </main>
+
+    <!-- NAP Local SEO Footer -->
+    <footer class="bg-gray-950 border-t border-gray-800 py-8 px-6 mt-12">
+        <div class="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="text-center md:text-left">
+                <div class="text-lg font-bold text-blue-400 uppercase tracking-tighter">Uyo Logistics Solutions</div>
+                <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Autonomous B2B Enterprise SaaS</p>
+            </div>
+            
+            <!-- Update the bracketed text below with your actual details -->
+            <div class="text-sm text-gray-400 space-y-2 text-center md:text-right">
+                <p><i class="fa-solid fa-location-dot w-5 text-gray-500"></i> [402 oron road, uyo], Uyo, Akwa Ibom State</p>
+                <p><i class="fa-solid fa-phone w-5 text-gray-500"></i> [09057236238]</p>
+                <p><i class="fa-solid fa-envelope w-5 text-gray-500"></i> admin@uyologistics.com</p>
+            </div>
+        </div>
+    </footer>
 
 </body>
 </html>
