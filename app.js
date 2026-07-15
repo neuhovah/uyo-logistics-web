@@ -68,22 +68,22 @@ L.Marker.include({
 // ==============================================================================
 
 window.createLiveIcon = function(vId, isBike) {
-    const color = isBike ? '#28a745' : '#dc3545';
     const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
+    
+    // We keep the Red Radar Ping look for both, but use the icon to differentiate
     return L.divIcon({ 
-        className: 'live-ping', 
+        className: 'live-telemetry-marker',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
         html: `
-            <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-                <div id="ping-dot-${vId}" style="background: ${color}; width:24px; height:24px; border-radius:50%; box-shadow: 0 0 15px ${color}; border: 2.5px solid white; z-index: 2; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;">
-                    <i class="fa-solid ${icon}" style="color: white; font-size: 11px;"></i>
-                </div>
-                <div id="ping-badge-${vId}" style="position: absolute; left: 28px; background: rgba(31, 41, 55, 0.9); border: 1px solid ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; white-space: nowrap; pointer-events: none; z-index: 1; transition: all 0.3s ease;">
-                    <i class="fa-solid ${icon} mr-1"></i> ${vId}
+            <div class="relative flex items-center justify-center h-6 w-6">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                
+                <div class="relative flex items-center justify-center h-5 w-5 rounded-full bg-red-600 border-[1.5px] border-white shadow-lg">
+                    <i class="fa-solid ${icon}" style="color: white; font-size: 8px;"></i>
                 </div>
             </div>
-        `,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12]
+        `
     });
 };
 
