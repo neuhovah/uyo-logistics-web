@@ -6,10 +6,11 @@
 // 📋 CHANGELOG
 // v2.3.8: 60FPS Interpolation Engine: Replaced conflicting CSS transitions with requestAnimationFrame JS tweening (.slideTo).
 // v2.3.9: Telemetry Diagnostic Patch: Injected WebSocket interceptor to debug ghost markers.
-// v2.4.0: SURCON Enterprise Telemetry Sync: Patched defensive payload mapper to strictly reference nested telemetry objects, resolving undefined status/deviation reference bugs.
-// v2.4.1: Cartographic Expansion & Matrix Parity: Expanded Google Places API bounds and strictly enforced mathematical geofencing on map-clicks to match backend matrix expansion (Lat 4.80-5.25, Lon 7.70-8.20).
-// v2.4.2: Survey-Grade Sync: Removed redundant UI pump price multiplication & switched to explicit backend time_saved_mins ingestion to resolve 0.0 mins bug.
-// v2.4.3: Telemetry Lock Patch: Introduced window.sessionMetricsCommitted state lock to prevent database metric duplication on multi-vehicle dispatch.
+// v2.4.0: SURCON Enterprise Telemetry Sync: Patched defensive payload mapper to strictly reference nested telemetry objects.
+// v2.4.1: Cartographic Expansion & Matrix Parity: Expanded Google Places API bounds and strictly enforced mathematical geofencing.
+// v2.4.2: Survey-Grade Sync: Removed redundant UI pump price multiplication & switched to explicit backend time_saved_mins.
+// v2.4.3: Telemetry Lock Patch: Introduced window.sessionMetricsCommitted state lock to prevent database metric duplication.
+// v2.4.4: Telemetry Schema Enforcement: Normalized WebSocket ingestion to strictly target 'lng' and 'lat' keys, resolving silent NaN failures.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -21,7 +22,7 @@ window.activeDeployments = {};
 window.activeDeploymentsMins = {}; 
 window.currentPhysicsEngine = {};
 window.lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
-window.sessionMetricsCommitted = false; // 🔴 ADDED: Single-Commit Telemetry Lock
+window.sessionMetricsCommitted = false; 
 
 window.depotLocation = { lat: 5.0333, lon: 7.9266 };
 window.dynamicDeliveries = [];
@@ -70,7 +71,6 @@ L.Marker.include({
 window.createLiveIcon = function(vId, isBike) {
     const icon = isBike ? 'fa-motorcycle' : 'fa-truck';
     
-    // We keep the Red Radar Ping look for both, but use the icon to differentiate
     return L.divIcon({ 
         className: 'live-telemetry-marker',
         iconSize: [24, 24],
@@ -78,7 +78,6 @@ window.createLiveIcon = function(vId, isBike) {
         html: `
             <div class="relative flex items-center justify-center h-6 w-6">
                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
-                
                 <div class="relative flex items-center justify-center h-5 w-5 rounded-full bg-red-600 border-[1.5px] border-white shadow-lg">
                     <i class="fa-solid ${icon}" style="color: white; font-size: 8px;"></i>
                 </div>
@@ -112,7 +111,6 @@ window.fetchLifetimeMetrics = async function() {
     } catch (err) { console.warn("Could not fetch lifetime stats from memory bank."); }
 };
 
-// 🔴 PATCHED: Removed Redundant Fuel Cost Multiplication
 window.updateBIMetrics = function(isSession = false) {
     const statFuelEl = document.getElementById('stat-fuel');
     const statEffEl = document.getElementById('stat-efficiency');
@@ -195,7 +193,6 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
         const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
         const peRaw = window.currentPhysicsEngine || {};
         
-        // 🔴 ADDED: Apply the Single-Commit Telemetry Lock
         let dispatchFuel = 0;
         let dispatchCo2 = 0;
         let dispatchEff = 0;
@@ -204,7 +201,7 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             dispatchFuel = safeFloat(peRaw.fuel_saved);
             dispatchCo2 = safeFloat(peRaw.co2_saved);
             dispatchEff = safeFloat(peRaw.efficiency);
-            window.sessionMetricsCommitted = true; // Lock telemetry for subsequent vehicles
+            window.sessionMetricsCommitted = true; 
         }
 
         const payload = {
@@ -282,10 +279,11 @@ window.connectLiveFleet = function() {
         const payload = rawData.telemetry ? rawData.telemetry : rawData;
         const vId = payload.vehicle_id || payload.id;
 
-        const markerLat = parseFloat(payload.lat ?? payload.latitude);
-        const markerLon = parseFloat(payload.lon ?? payload.longitude);
+        // 🔴 STRICT SCHEMA FIX: Explicitly target the keys main.py sends
+        const markerLat = parseFloat(payload.lat);
+        const markerLng = parseFloat(payload.lng);
 
-        if (isNaN(markerLat) || isNaN(markerLon) || !vId) {
+        if (isNaN(markerLat) || isNaN(markerLng) || !vId) {
             if (payload.status === 'completed' && vId) {
                 console.log(`🏁 Mission Completed for ${vId}`); 
                 if (window.liveMarkers[vId]) {
@@ -332,7 +330,7 @@ window.connectLiveFleet = function() {
                 el.style.transition = 'none'; 
             }
             
-            marker.slideTo([markerLat, markerLon], 667);
+            marker.slideTo([markerLat, markerLng], 667);
             marker.setZIndexOffset(1000); 
 
         } else {
@@ -340,7 +338,7 @@ window.connectLiveFleet = function() {
                            ? window.fleetRegistry[vId] 
                            : String(vId).toLowerCase().includes('bike');
                            
-            window.liveMarkers[vId] = L.marker([markerLat, markerLon], {
+            window.liveMarkers[vId] = L.marker([markerLat, markerLng], {
                 icon: window.createLiveIcon(vId, isBike), 
                 pane: 'poiPane',
                 zIndexOffset: 1000
@@ -560,7 +558,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.4.3 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.4.4 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -1065,7 +1063,7 @@ function bootCommandCenter() {
         window.activeDeployments = {}; 
         window.activeDeploymentsMins = {};
         window.currentPhysicsEngine = {};
-        window.sessionMetricsCommitted = false; // 🔴 ADDED: Reset the lock to allow new metrics
+        window.sessionMetricsCommitted = false; 
         
         if (typeof window.liveMarkers !== 'undefined') {
             for (let id in window.liveMarkers) {
@@ -1088,7 +1086,6 @@ function bootCommandCenter() {
         if (reportContainer) reportContainer.style.display = "none";
     };
 
-    // 🔴 PATCHED: Strictly Map Directly to Sanitized Backend Metrics
     window.updateTelemetryUI = function(apiResponse) {
         const trafficMultiplier = apiResponse.traffic_multiplier || 1.0;
         const trafficText = document.getElementById('traffic-text');
@@ -1203,7 +1200,7 @@ function bootCommandCenter() {
             window.unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
             window.activeDeploymentsMins = {};
-            window.sessionMetricsCommitted = false; // 🔴 ADDED: Reset the lock for the new optimization set
+            window.sessionMetricsCommitted = false; 
 
             let backendOptimizedMins = 0;
             data.routes.forEach(r => {
