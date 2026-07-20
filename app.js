@@ -11,11 +11,13 @@
 // v2.4.2: Survey-Grade Sync: Removed redundant UI pump price multiplication & switched to explicit backend time_saved_mins.
 // v2.4.3: Telemetry Lock Patch: Introduced window.sessionMetricsCommitted state lock to prevent database metric duplication.
 // v2.4.4: Telemetry Schema Enforcement: Normalized WebSocket ingestion to strictly target 'lng' and 'lat' keys, resolving silent NaN failures.
+// v2.4.5: Architecture Synchronization: Pointed API and WS globals directly to Render to resolve split-brain memory allocation.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
-window.API_BASE_URL = "https://api.uyologistics.com";
-window.WS_BASE_URL = "wss://api.uyologistics.com";
+// 🔴 SYNCHRONIZATION FIX: Pointed directly to Render to ensure simulator and frontend share the exact same worker memory.
+window.API_BASE_URL = "https://uyo-routing-engine.onrender.com";
+window.WS_BASE_URL = "wss://uyo-routing-engine.onrender.com";
 
 window.fleetRegistry = {}; 
 window.activeDeployments = {};
@@ -535,7 +537,8 @@ if (!activeLicenseKey) {
     
     bootCommandCenter(); 
 
-    fetch("https://api.uyologistics.com/api/vrp/history", {
+    // 🔴 SYNCHRONIZATION FIX: Handshake explicitly dynamically tied to window.API_BASE_URL to avoid hardcoded domain blocks
+    fetch(`${window.API_BASE_URL}/api/vrp/history`, {
         method: 'GET',
         headers: { 'x-license-key': activeLicenseKey }
     })
