@@ -12,6 +12,7 @@
 // v2.4.3: Telemetry Lock Patch: Introduced window.sessionMetricsCommitted state lock to prevent database metric duplication.
 // v2.4.4: Telemetry Schema Enforcement: Normalized WebSocket ingestion to strictly target 'lng' and 'lat' keys, resolving silent NaN failures.
 // v2.4.5: Architecture Synchronization: Pointed API and WS globals directly to Render to resolve split-brain memory allocation.
+// v2.5.0: Enriched Payload Integration: Added dispatcher metadata inputs, transformed array mapping to RouteWaypoint dictionaries.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -22,6 +23,7 @@ window.WS_BASE_URL = "wss://uyo-routing-engine.onrender.com";
 window.fleetRegistry = {}; 
 window.activeDeployments = {};
 window.activeDeploymentsMins = {}; 
+window.activeRoutePlans = {}; // NEW: Stores the enriched RouteWaypoint payload
 window.currentPhysicsEngine = {};
 window.lifetimeStats = { fuel: 0, co2: 0, efficiency: 0 };
 window.sessionMetricsCommitted = false; 
@@ -189,8 +191,9 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
     const newTab = window.open('about:blank', '_blank'); 
 
     try {
-        const coords = window.activeDeployments[vehicleId];
-        if (!coords) throw new Error("Route coordinates missing from memory.");
+        // --- NEW: Fetching the enriched structured dictionary instead of raw OSRM path arrays ---
+        const routePlan = window.activeRoutePlans[vehicleId];
+        if (!routePlan) throw new Error("Route plan metadata missing from memory.");
         
         const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
         const peRaw = window.currentPhysicsEngine || {};
@@ -208,7 +211,7 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
 
         const payload = {
             vehicle_id: String(vehicleId),
-            route_coords: coords,
+            route_plan: routePlan, // UPDATED: Conforms to List[RouteWaypoint]
             fuel_saved: dispatchFuel, 
             co2_saved: dispatchCo2,
             efficiency: dispatchEff
@@ -305,9 +308,12 @@ window.connectLiveFleet = function() {
                 const syncData = await syncRes.json();
                 
                 if (syncData.active_missions && syncData.active_missions[vId]) {
-                    const coords = syncData.active_missions[vId].coords;
+                    const rawCoords = syncData.active_missions[vId].coords;
                     
-                    L.polyline(coords, { 
+                    // Safely extract lat/lng regardless of array format or enriched dict format
+                    const extractedCoords = rawCoords.map(c => Array.isArray(c) ? c : [c.lat, c.lng]);
+                    
+                    L.polyline(extractedCoords, { 
                         color: '#f59e0b', 
                         weight: 4, 
                         opacity: 0.8, 
@@ -315,7 +321,7 @@ window.connectLiveFleet = function() {
                         pane: 'routePane' 
                     }).addTo(window.routeLayerGroup);
                     
-                    window.activeDeployments[vId] = coords;
+                    window.activeDeployments[vId] = extractedCoords;
                     console.log(`✅ Global Sync Complete: Route drawn for ${vId}`);
                 }
             } catch (err) {
@@ -561,7 +567,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.4.4 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.5.0 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -814,6 +820,8 @@ function bootCommandCenter() {
             return; 
         }
         
+        let custName = prompt("Enter Customer Name (or leave blank for Unknown):", "") || "Unknown Customer";
+        let custPhone = prompt("Enter Customer Phone Number:", "") || "N/A";
         let weightInput = prompt("Enter parcel weight in kg for this stop (e.g., 2, 15, 30):", "1");
         let parsedWeight = parseInt(weightInput, 10);
         if (isNaN(parsedWeight) || parsedWeight <= 0) {
@@ -823,12 +831,21 @@ function bootCommandCenter() {
         const cleanLat = parseFloat(e.latlng.lat.toFixed(6));
         const cleanLng = parseFloat(e.latlng.lng.toFixed(6));
         
-        const dropId = "Drop_" + Math.floor(Math.random() * 10000);
-        window.dynamicDeliveries.push({ id: dropId, lat: cleanLat, lon: cleanLng, weight: parsedWeight });
+        const dropId = "ORD-" + Math.floor(Math.random() * 10000);
+        window.dynamicDeliveries.push({ 
+            id: dropId, 
+            lat: cleanLat, 
+            lon: cleanLng, 
+            weight: parsedWeight, 
+            customer_name: custName, 
+            phone: custPhone 
+        });
         
         const popupContent = `
             <div style="text-align: center;">
                 <b style="color: #1f2937;">Order: ${dropId}</b><br>
+                <span style="font-size: 12px; color: #3b82f6;"><b>${custName}</b></span><br>
+                <span style="font-size: 11px; color: #4b5563;">${custPhone}</span><br>
                 <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
                 <button onclick="window.removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                     <i class="fa-solid fa-trash"></i> Remove Drop
@@ -1001,20 +1018,29 @@ function bootCommandCenter() {
                     searchInput.value = '';
                     searchInput.focus();
                     
+                    let custName = prompt(`Enter Customer Name for ${item.name} (or leave blank):`, "Unknown Customer") || "Unknown Customer";
+                    let custPhone = prompt("Enter Customer Phone:", "N/A") || "N/A";
                     let weightInput = prompt(`Enter parcel weight in kg for ${item.name} (e.g., 2, 15, 30):`, "1");
                     let parsedWeight = parseInt(weightInput, 10);
                     if (isNaN(parsedWeight) || parsedWeight <= 0) {
                         parsedWeight = 1; 
                     }
                     
-                    const dropId = "Search_" + Math.floor(Math.random() * 10000);
-                    window.dynamicDeliveries.push({ id: dropId, lat: item.lat, lon: item.lng, weight: parsedWeight });
+                    const dropId = "ORD-" + Math.floor(Math.random() * 10000);
+                    window.dynamicDeliveries.push({ 
+                        id: dropId, 
+                        lat: item.lat, 
+                        lon: item.lng, 
+                        weight: parsedWeight,
+                        customer_name: custName,
+                        phone: custPhone 
+                    });
 
                     const popupContent = `
                         <div style="text-align: center;">
-                            <b style="color: #1f2937;">Dispatched to:</b><br>
-                            <span style="font-size: 11px; font-weight: bold;">${item.name}</span><br>
-                            <span style="font-size: 10px; color: #4b5563;">${item.address}</span><br>
+                            <b style="color: #1f2937;">Order: ${dropId}</b><br>
+                            <span style="font-size: 12px; color: #3b82f6;"><b>${custName}</b></span><br>
+                            <span style="font-size: 11px; color: #4b5563;">${custPhone}</span><br>
                             <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
                             <button onclick="window.removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
                                 <i class="fa-solid fa-trash"></i> Remove Drop
@@ -1064,6 +1090,7 @@ function bootCommandCenter() {
         window.routeLayerGroup.clearLayers(); 
         window.dynamicDeliveries = []; 
         window.activeDeployments = {}; 
+        window.activeRoutePlans = {}; // Reset enriched payloads
         window.activeDeploymentsMins = {};
         window.currentPhysicsEngine = {};
         window.sessionMetricsCommitted = false; 
@@ -1139,7 +1166,7 @@ function bootCommandCenter() {
                 { id: "BIKE-03", type: "bike", capacity: 10, speed_factor: 1.5, fixed_cost: 0, cost_per_km: 10 }
             ],
             van: [
-                { id: "VAN-01", type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 10000, cost_per_km: 50 }
+                { id: "VAN-01", type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 10000, cost_cost_per_km: 50 }
             ]
         };
         let activeFleet = (vehicleChoice === 'all') ? null : fleetProfiles[vehicleChoice];
@@ -1202,6 +1229,7 @@ function bootCommandCenter() {
             window.routeLayerGroup.clearLayers(); 
             window.unassignedPinsLayer.clearLayers();
             window.activeDeployments = {}; 
+            window.activeRoutePlans = {}; // Reset payloads
             window.activeDeploymentsMins = {};
             window.sessionMetricsCommitted = false; 
 
@@ -1258,14 +1286,25 @@ function bootCommandCenter() {
         if (fleetList) fleetList.innerHTML = "";
         
         const locDict = {};
+        const metaDict = {}; // NEW: Dictionary to map nodes to full customer details
+
+        // Define the depot metadata
         locDict[0] = [payload.depot.lat, payload.depot.lon];
         locDict["0"] = [payload.depot.lat, payload.depot.lon];
         locDict['depot'] = [payload.depot.lat, payload.depot.lon];
+        metaDict[0] = { id: 'DEPOT', customer_name: 'Command Center Depot', phone: 'N/A' };
+        metaDict["0"] = metaDict[0];
+        metaDict['depot'] = metaDict[0];
         
         payload.deliveries.forEach((d, idx) => {
             locDict[idx + 1] = [d.lat, d.lon];
             locDict[String(idx + 1)] = [d.lat, d.lon];
             locDict[d.id] = [d.lat, d.lon];
+
+            // Store full customer objects based on array index
+            metaDict[idx + 1] = d;
+            metaDict[String(idx + 1)] = d;
+            metaDict[d.id] = d;
         });
 
         for (const r of routes) {
@@ -1319,20 +1358,53 @@ function bootCommandCenter() {
                     const durationMin = (osrmData.routes[0].duration / 60).toFixed(1);
 
                     const routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                    
+                    // Maintain dense polyline for frontend interpolation logic
                     window.activeDeployments[vId] = routeCoords;
                     window.activeDeploymentsMins[vId] = parseFloat(durationMin);
 
                     const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(window.routeLayerGroup);
                     
+                    // --- NEW: Map waypoints to the backend RouteWaypoint structure while rendering popups ---
+                    let currentRoutePlan = [];
                     let sequenceCounter = 1;
+                    
                     r.route.forEach((node, idx) => {
-                        if (idx === 0 || idx === r.route.length - 1) return;
                         const coords = locDict[node];
+                        const meta = metaDict[node] || { id: `DEPOT-${sequenceCounter}`, customer_name: 'Command Center Depot', phone: 'N/A' };
+
                         if (coords) {
-                            L.marker(coords, { icon: L.divIcon({ className: 'seq', html: `<div style="background: white; color: ${color}; border: 2.5px solid ${color}; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${sequenceCounter}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), pane: 'poiPane' }).addTo(window.routeLayerGroup);
+                            // Construct the dictionary expected by main.py
+                            currentRoutePlan.push({
+                                sequence: sequenceCounter,
+                                lat: coords[0],
+                                lng: coords[1],
+                                customer_name: meta.customer_name || 'Depot',
+                                phone: meta.phone || 'N/A',
+                                order_id: meta.id || `ORD-${sequenceCounter}`
+                            });
+
+                            if (idx !== 0 && idx !== r.route.length - 1) {
+                                // Dynamic UI Popup for drivers showing the mapped customer metadata
+                                const popupHtml = `
+                                    <div style="text-align: center;">
+                                        <b style="color: #1f2937;">Drop-off: ${meta.customer_name || 'Unknown'}</b><br>
+                                        <span style="font-size: 11px; color: #4b5563;">📞 ${meta.phone || 'N/A'}</span><br>
+                                        <span style="font-size: 10px; font-weight: bold; color: #28a745;">Order ID: ${meta.id}</span>
+                                    </div>
+                                `;
+
+                                L.marker(coords, { 
+                                    icon: L.divIcon({ className: 'seq', html: `<div style="background: white; color: ${color}; border: 2.5px solid ${color}; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${sequenceCounter}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), 
+                                    pane: 'poiPane' 
+                                }).addTo(window.routeLayerGroup).bindPopup(popupHtml);
+                            }
                             sequenceCounter++;
                         }
                     });
+
+                    // Store the strictly formatted structured dictionaries to push to the backend
+                    window.activeRoutePlans[vId] = currentRoutePlan;
 
                     try {
                         if (typeof L.polylineDecorator === 'function') {
