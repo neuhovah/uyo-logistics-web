@@ -13,6 +13,7 @@
 // v2.4.4: Telemetry Schema Enforcement: Normalized WebSocket ingestion to strictly target 'lng' and 'lat' keys, resolving silent NaN failures.
 // v2.4.5: Architecture Synchronization: Pointed API and WS globals directly to Render to resolve split-brain memory allocation.
 // v2.5.0: Enriched Payload Integration: Added dispatcher metadata inputs, transformed array mapping to RouteWaypoint dictionaries.
+// v2.5.1: Dual-Payload Patch: Added fallback route_coords generation to window.deployMission to bypass strict backend validation.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -209,9 +210,13 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             window.sessionMetricsCommitted = true; 
         }
 
+        // Map the routePlan waypoints into flat [lat, lng] pairs for backward compatibility
+        const fallbackCoords = routePlan.map(wp => [wp.lat, wp.lng]);
+
         const payload = {
             vehicle_id: String(vehicleId),
             route_plan: routePlan, // UPDATED: Conforms to List[RouteWaypoint]
+            route_coords: fallbackCoords, // Satisfies strict legacy backend validation
             fuel_saved: dispatchFuel, 
             co2_saved: dispatchCo2,
             efficiency: dispatchEff
