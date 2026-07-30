@@ -31,6 +31,7 @@
         <i class="fa-solid fa-triangle-exclamation mr-2"></i> Cellular Connection Lost. Reconnecting...
     </div>
 
+    <!-- Navigation & Telemetry Card -->
     <div class="bg-gray-800 rounded-3xl p-6 shadow-2xl border border-gray-700 mb-6 relative overflow-hidden">
         <div class="flex justify-between items-start mb-4 relative z-10">
             <h2 id="vehicle-id" class="text-xl font-bold text-gray-100">---</h2>
@@ -53,7 +54,17 @@
         </button>
     </div>
 
-    <div class="mt-auto bg-blue-900/20 border border-blue-800/50 p-4 rounded-2xl">
+    <!-- NEW: Delivery Manifest Card -->
+    <div id="manifest-container" class="bg-gray-800 rounded-3xl p-5 shadow-2xl border border-gray-700 mb-6 hidden">
+        <h3 class="text-xs font-bold text-gray-400 mb-4 uppercase tracking-widest border-b border-gray-700 pb-2">
+            <i class="fa-solid fa-clipboard-list mr-2"></i> Route Manifest
+        </h3>
+        <div id="manifest-list" class="space-y-3">
+            <!-- Dynamic Stops Injection -->
+        </div>
+    </div>
+
+    <div class="mt-auto bg-blue-900/20 border border-blue-800/50 p-4 rounded-2xl mb-4">
         <p class="text-[11px] text-blue-300 leading-relaxed font-medium">
             <i class="fa-solid fa-shield-halved mr-1"></i>
             Keep this device plugged into power. <br><br>
@@ -65,13 +76,69 @@
     <script>
         // --- SECURE ENTERPRISE DOMAIN UPGRADE ---
         // 🚨 CRITICAL FIX: Swapped to Production Domains (Vercel Reverse Proxy enabled)
-        const API_BASE_URL = "";
+        const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
         
         const urlParams = new URLSearchParams(window.location.search);
         const vehicleId = urlParams.get('v') || "UNKNOWN-VEH";
         const gmapsUrl = urlParams.get('map') || "#";
 
         document.getElementById('vehicle-id').innerText = vehicleId;
+
+        // 🚨 FETCH MANIFEST DATA DIRECTLY FROM DB
+        async function fetchMissionManifest() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/vrp/active-missions`);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                
+                if (data.active_missions && data.active_missions[vehicleId]) {
+                    const coordsArray = data.active_missions[vehicleId].coords;
+                    
+                    if (coordsArray && coordsArray.length > 0) {
+                        const manifestList = document.getElementById('manifest-list');
+                        manifestList.innerHTML = '';
+                        
+                        coordsArray.forEach(stop => {
+                            // Verify this is a rich dictionary, not a legacy raw array
+                            if (stop.customer_name && stop.sequence) {
+                                const isDepot = stop.order_id === 'DEPOT';
+                                const bgClass = isDepot ? 'bg-blue-900/30 border-blue-800/50' : 'bg-gray-700/50 border-gray-600';
+                                const numColor = isDepot ? 'text-blue-400' : 'text-green-400';
+                                
+                                const phoneHtml = (stop.phone && stop.phone !== 'N/A')
+                                    ? `<a href="tel:${stop.phone}" class="mt-2 inline-flex items-center gap-2 text-[11px] bg-green-600/90 active:bg-green-500 text-white px-4 py-1.5 rounded-full font-bold shadow-md border border-green-500">
+                                            <i class="fa-solid fa-phone"></i> Call Customer
+                                       </a>`
+                                    : `<span class="text-[10px] text-gray-500 mt-2 block italic">No Phone Number Provided</span>`;
+
+                                manifestList.innerHTML += `
+                                    <div class="p-3 ${bgClass} border rounded-xl relative pl-8">
+                                        <div class="absolute top-3 -left-3 w-7 h-7 bg-gray-900 ${numColor} font-black text-[11px] flex items-center justify-center rounded-full border-2 border-gray-700 shadow-lg z-10">
+                                            ${stop.sequence}
+                                        </div>
+                                        <div class="ml-2">
+                                            <p class="text-[13px] font-bold text-gray-100">${stop.customer_name}</p>
+                                            <p class="text-[10px] font-mono text-gray-400 mt-0.5">ID: ${stop.order_id}</p>
+                                            ${!isDepot ? phoneHtml : ''}
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        });
+                        
+                        if (manifestList.innerHTML !== '') {
+                            document.getElementById('manifest-container').classList.remove('hidden');
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn("Could not retrieve delivery manifest:", err);
+            }
+        }
+        
+        // Execute fetch on load
+        fetchMissionManifest();
 
         // 🚨 CRITICAL FIX 1: WakeLock API (Prevent Screen Sleep)
         let wakeLock = null;
