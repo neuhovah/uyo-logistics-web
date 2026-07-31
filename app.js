@@ -14,6 +14,7 @@
 // v2.4.5: Architecture Synchronization: Pointed API and WS globals directly to Render to resolve split-brain memory allocation.
 // v2.5.0: Enriched Payload Integration: Added dispatcher metadata inputs, transformed array mapping to RouteWaypoint dictionaries.
 // v2.5.1: Dual-Payload Patch: Added fallback route_coords generation to window.deployMission to bypass strict backend validation.
+// v2.5.2: Telemetry Schema Patch: Updated WebSocket ingestion to accept both 'lng' and 'lon' coordinate keys to resolve silent NaN failures on mobile driver deployment.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -289,9 +290,9 @@ window.connectLiveFleet = function() {
         const payload = rawData.telemetry ? rawData.telemetry : rawData;
         const vId = payload.vehicle_id || payload.id;
 
-        // 🔴 STRICT SCHEMA FIX: Explicitly target the keys main.py sends
+        // 🔴 STRICT SCHEMA FIX: Explicitly target the keys main.py sends (Patched for lon fallback)
         const markerLat = parseFloat(payload.lat);
-        const markerLng = parseFloat(payload.lng);
+        const markerLng = parseFloat(payload.lng || payload.lon);
 
         if (isNaN(markerLat) || isNaN(markerLng) || !vId) {
             if (payload.status === 'completed' && vId) {
