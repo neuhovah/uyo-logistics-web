@@ -1,4 +1,4 @@
-![Uyo Logistics Intelligence](preview-image.jpg)
+<img src="preview-image.jpg" alt="Uyo Logistics Intelligence" width="700" style="border-radius: 8px;">
 
 # Uyo Logistics Intelligence: Autonomous Route Optimization Engine
 
