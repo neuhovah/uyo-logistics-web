@@ -966,7 +966,7 @@ function bootCommandCenter() {
             );
 
             // 🔴 SECURITY FIX: Redacted hardcoded API key to clear GitHub Secret Alert
-            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY || "AIzaSyYourActualApiKeyHere..."; 
+            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY || "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
             const locationRestriction = { rectangle: { low: { latitude: 4.8000, longitude: 7.7000 }, high: { latitude: 5.2500, longitude: 8.2000 } } };
             
             searchPromises.push(
