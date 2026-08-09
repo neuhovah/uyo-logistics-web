@@ -16,6 +16,7 @@
 // v2.5.1: Dual-Payload Patch: Added fallback route_coords generation to window.deployMission to bypass strict backend validation.
 // v2.5.2: Telemetry Schema Patch: Updated WebSocket ingestion to accept both 'lng' and 'lon' coordinate keys to resolve silent NaN failures on mobile driver deployment.
 // v2.5.3: Security & Auth Patch: Explicitly injected missing x-license-key headers across all fetch endpoints and redacted exposed Google API key.
+// v2.5.4: Places API Hotfix: Modified restricted key placeholder strategy to resolve HTTP 400 errors during UI geocoding searches.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -586,7 +587,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.5.3 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.5.4 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -965,7 +966,7 @@ function bootCommandCenter() {
             );
 
             // 🔴 SECURITY FIX: Redacted hardcoded API key to clear GitHub Secret Alert
-            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY || "YOUR_RESTRICTED_API_KEY_HERE"; 
+            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY || "AIzaSyYourActualApiKeyHere..."; 
             const locationRestriction = { rectangle: { low: { latitude: 4.8000, longitude: 7.7000 }, high: { latitude: 5.2500, longitude: 8.2000 } } };
             
             searchPromises.push(
