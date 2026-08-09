@@ -15,6 +15,7 @@
 // v2.5.0: Enriched Payload Integration: Added dispatcher metadata inputs, transformed array mapping to RouteWaypoint dictionaries.
 // v2.5.1: Dual-Payload Patch: Added fallback route_coords generation to window.deployMission to bypass strict backend validation.
 // v2.5.2: Telemetry Schema Patch: Updated WebSocket ingestion to accept both 'lng' and 'lon' coordinate keys to resolve silent NaN failures on mobile driver deployment.
+// v2.5.3: Security & Auth Patch: Explicitly injected missing x-license-key headers across all fetch endpoints and redacted exposed Google API key.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -95,7 +96,9 @@ window.createLiveIcon = function(vId, isBike) {
 window.fetchLifetimeMetrics = async function() {
     try {
         const response = await fetch(`${window.API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
+            method: 'GET',
             headers: { 
+                'Content-Type': 'application/json',
                 'x-license-key': localStorage.getItem('uyo_license_key'),
                 'Cache-Control': 'no-cache'
             }
@@ -309,7 +312,11 @@ window.connectLiveFleet = function() {
             console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${vId}...`);
             try {
                 const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
-                    headers: { 'x-license-key': localStorage.getItem('uyo_license_key') }
+                    method: 'GET',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-license-key': localStorage.getItem('uyo_license_key') 
+                    }
                 });
                 const syncData = await syncRes.json();
                 
@@ -445,7 +452,10 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
 
         const pushRes = await fetch(`${window.API_BASE_URL}/api/vrp/push-reroute`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-license-key': currentLicenseKey 
+            },
             body: JSON.stringify({
                 vehicle_id: vehicleId,
                 new_gmaps_url: encodeURIComponent(newMapUrl)
@@ -552,7 +562,10 @@ if (!activeLicenseKey) {
     // 🔴 SYNCHRONIZATION FIX: Handshake explicitly dynamically tied to window.API_BASE_URL to avoid hardcoded domain blocks
     fetch(`${window.API_BASE_URL}/api/vrp/history`, {
         method: 'GET',
-        headers: { 'x-license-key': activeLicenseKey }
+        headers: { 
+            'Content-Type': 'application/json',
+            'x-license-key': activeLicenseKey 
+        }
     })
     .then(response => {
         if (response.status === 401 || response.status === 403) {
@@ -573,7 +586,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.5.0 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.5.3 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -951,8 +964,8 @@ function bootCommandCenter() {
                 }).catch(err => console.warn("Nominatim failed:", err))
             );
 
-            // 🔴 SURVEY-GRADE FIX: Expanded Google API Restriction Bounds
-            const GOOGLE_API_KEY = "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
+            // 🔴 SECURITY FIX: Redacted hardcoded API key to clear GitHub Secret Alert
+            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY || "YOUR_RESTRICTED_API_KEY_HERE"; 
             const locationRestriction = { rectangle: { low: { latitude: 4.8000, longitude: 7.7000 }, high: { latitude: 5.2500, longitude: 8.2000 } } };
             
             searchPromises.push(
@@ -1505,7 +1518,10 @@ function bootCommandCenter() {
             callback: function(response) {
                 fetch(`${window.API_BASE_URL}/api/vrp/activate-license`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-license-key': localStorage.getItem('uyo_license_key')
+                    },
                     body: JSON.stringify({ 
                         reference: response.reference, 
                         license_key: localStorage.getItem('uyo_license_key'),
