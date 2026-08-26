@@ -17,6 +17,7 @@
 // v2.5.2: Telemetry Schema Patch: Updated WebSocket ingestion to accept both 'lng' and 'lon' coordinate keys to resolve silent NaN failures on mobile driver deployment.
 // v2.5.3: Security & Auth Patch: Explicitly injected missing x-license-key headers across all fetch endpoints and redacted exposed Google API key.
 // v2.5.4: Places API Hotfix: Modified restricted key placeholder strategy to resolve HTTP 400 errors during UI geocoding searches.
+// v2.5.5: Basemap Authentication Patch: Injected CARTO API key to raster tile endpoints to resolve commercial watermarks and prevent rate-limiting.
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -587,7 +588,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.5.4 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.5.5 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -597,13 +598,13 @@ function bootCommandCenter() {
         L.latLng(5.2500, 8.2000)  
     );
 
-    const darkMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
+    const darkMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_25zt_1_55c6b7ed19fd0cb6b0e8591b', { 
         attribution: '© OpenStreetMap contributors, © CARTO',
         subdomains: 'abcd',
         maxZoom: 22,
         maxNativeZoom: 19
     });
-    const lightMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { 
+    const lightMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_25zt_1_55c6b7ed19fd0cb6b0e8591b', { 
         attribution: '© OpenStreetMap contributors, © CARTO',
         subdomains: 'abcd',
         maxZoom: 22,
