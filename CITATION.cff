@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software or the associated dataset, please cite it as below."
+authors:
+  - family-names: "Uso-essien"
+    given-names: "Nsikan Enoh"
+    orcid: "https://orcid.org/0009-0007-3334-9494"
+title: "Empirical Routing Validation and Spatial Econometric Logistics Data for Uyo, Nigeria"
+version: 1.0.0
+doi: 10.5281/zenodo.10.5281/zenodo.22288639
+date-released: 2026-09-04
+url: "https://github.com/neuhovah/uyo-logistics-web"
