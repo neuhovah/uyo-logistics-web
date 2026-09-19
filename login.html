@@ -134,7 +134,6 @@
                         if (res.ok) {
                             alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s) with a ${stopLimit}-stop limit.`);
                             localStorage.setItem('uyo_license_key', expiredKey);
-                            // CORRECTED REDIRECT: Now points to the secure dashboard
                             window.location.replace("dashboard.html"); 
                         } else {
                             alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
@@ -167,7 +166,6 @@
 
                 if (response.ok) {
                     localStorage.setItem('uyo_license_key', key);
-                    // CORRECTED REDIRECT: Now points to the secure dashboard
                     window.location.replace("dashboard.html");
                 } else {
                     const errorData = await response.json().catch(() => ({}));
@@ -228,20 +226,22 @@
                     body: JSON.stringify({ email: userEmail.trim() })
                 });
 
+                const data = await response.json().catch(() => ({}));
+
                 if (response.ok) {
                     alert(`📩 KEY DISPATCHED!\n\nPlease check your inbox for ${userEmail}.`);
                     loginBtn.innerText = "Check your email to proceed";
                     loginBtn.disabled = true; 
                     loginBtn.style.backgroundColor = "#1e293b"; 
                 } else {
-                    const errData = await response.json().catch(() => ({}));
-                    alert(`⚠️ Action Denied: ${errData.detail || "Could not generate trial."}`);
+                    // This explicitly extracts the exact database or environment trace we configured in FastAPI
+                    alert(`⚠️ Action Denied: ${data.detail || data.message || "Unknown server error"}`);
                     loginBtn.innerHTML = originalBtnText;
                     loginBtn.disabled = false;
                 }
             } catch (error) {
                 console.error("Trial Error:", error);
-                alert("Network error.");
+                alert(`⚠️ Network Error: ${error.message || "Failed to reach the server."}`);
                 loginBtn.innerHTML = originalBtnText;
                 loginBtn.disabled = false;
             }
