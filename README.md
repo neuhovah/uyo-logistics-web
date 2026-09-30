@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="preview-image.jpg" alt="Uyo Logistics Intelligence Command Center" width="700" style="border-radius: 8px; margin-bottom: 15px;">
+  <img src="preview-image.png" alt="Uyo Logistics Intelligence Command Center" width="700" style="border-radius: 8px; margin-bottom: 15px;">
 
   # Uyo Logistics Intelligence: Autonomous Route Optimization Engine 
   **Live Application:** [uyologistics.com](https://uyologistics.com)
