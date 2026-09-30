@@ -66,3 +66,16 @@ Because this repository utilizes a modern Next.js framework, standard HTML local
    ```bash
    git clone [https://github.com/neuhovah/uyo-logistics-web.git](https://github.com/neuhovah/uyo-logistics-web.git)
    cd uyo-logistics-web
+
+2. **Launch the Development Server:**
+Ensure you have Node.js installed, then install dependencies and start the Next.js local server:
+
+Bash
+npm install
+npm run dev
+
+3.  **Access the Command Center:**
+Navigate to http://localhost:3000 in your browser to view the operational dashboard.
+
+License
+This project is licensed under the MIT License - see the LICENSE file for details.
