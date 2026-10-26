@@ -18,6 +18,28 @@
 // v2.5.3: Security & Auth Patch: Explicitly injected missing x-license-key headers across all fetch endpoints and redacted exposed Google API key.
 // v2.5.4: Places API Hotfix: Modified restricted key placeholder strategy to resolve HTTP 400 errors during UI geocoding searches.
 // v2.5.5: Basemap Authentication Patch: Injected CARTO API key to raster tile endpoints to resolve commercial watermarks and prevent rate-limiting.
+// v2.6.0: Backend v3 alignment and hardening (REQUIRES API v3.0.0 deployed FIRST):
+//   API alignment
+//   - WebSocket authenticates with {"type":"auth"}, heartbeats, reconnects with backoff, stops on auth failure (4401)
+//   - Dispatch happens BEFORE the driver link is built; the link carries the per-mission driver token (&t=)
+//   - Dispatch claims session metrics once, gives them back on failure, and sends the measured distance_km
+//   - Licence renewal sends only reference + licence key (the server now decides days/stops from the verified payment)
+//     and passes the licence key as Paystack metadata so the signed webhook can apply it too
+//   - fetchLifetimeMetrics uses cache:'no-store' (no Cache-Control header), handles 401/402
+//   - Re-route is disabled (API returns 501) instead of spending stop quota and reporting a fake success
+//   Security
+//   - Removed the hard-coded Google Places key (set window.ENV_GOOGLE_API_KEY; ROTATE the old key and restrict it by referrer)
+//   - All third-party / user text (OSM+Foursquare POI properties, Nominatim/Google results, customer names) is HTML-escaped
+//   Correctness
+//   - Fixed fleet typo cost_cost_per_km -> cost_per_km for the van profile
+//   - Unique order ids (4-digit random ids collided); exact vehicle-id matching for deploy buttons
+//   - Local POI search now finds features (it iterated the wrong layer level and never matched)
+//   - Route cards use backend-measured distance/time; OSRM is only used to draw geometry, with a straight-line fallback
+//     so a mission can still be deployed when OSRM is down (it silently dropped the vehicle before)
+//   - Validation errors (422) are readable; "Location N" errors name the drop; solver warnings are shown
+//   - Telemetry: duplicates / out-of-order ignored, stop events handled, completed removes marker, animation follows real
+//     update spacing, route sync throttled, position logging removed
+//   - UI labels say fuel/CO2 are estimates, "efficiency" is distance saved vs entry order, traffic factor is an assumption
 // ==============================================================================
 
 // --- 0. PERSISTENT GLOBAL STATE (PATCHED & EXTENDED) ---
@@ -42,6 +64,105 @@ window.routeLayerGroup = null;
 window.unassignedPinsLayer = null;
 window.liveFleetSocket = null;
 
+// v2.6.0 state
+window.FEATURES = { reroute: false };       // API /push-reroute returns 501 until implemented
+window.MAX_DISPLAY_ACCURACY_M = 150;        // fixes worse than this are drawn dimmed
+window.DEBUG_TELEMETRY = false;             // never log vehicle positions unless debugging
+window.RESEARCH_MODE = new URLSearchParams(window.location.search).get('research') === '1'; // adds &research=1 to driver links
+window.currentMetrics = null;               // measured distances from the last solve (data.metrics)
+window.currentAssumptions = null;           // fuel/CO2 assumptions from the last solve (data.assumptions)
+window.currentWarnings = [];
+window.stopEvents = {};                     // arrived/departed markers per vehicle
+window.lastTelemetry = {};                  // per-vehicle {session, seq, at} for de-duplication
+window.routeSyncState = {};                 // per-vehicle throttle for route-geometry sync
+window._notified = {};
+window._dropCounter = 0;
+
+// --- 0.0 SMALL SHARED HELPERS ---
+window.escapeHtml = function(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+};
+
+window.escapeRegex = function(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
+window.notifyOnce = function(key, message) {
+    if (window._notified[key]) return;
+    window._notified[key] = true;
+    alert(message);
+};
+
+// Non-blocking notice (never parsed as HTML).
+window.showToast = function(message, durationMs) {
+    try {
+        const el = document.createElement('div');
+        el.textContent = String(message);
+        el.style.cssText = 'position:fixed; top:16px; left:50%; transform:translateX(-50%); max-width:min(90vw,520px); background:#1f2937; color:#fbbf24; border:1px solid #f59e0b; border-radius:8px; padding:10px 14px; font:600 12px ui-sans-serif,system-ui,sans-serif; z-index:99999; box-shadow:0 10px 25px rgba(0,0,0,0.6);';
+        document.body.appendChild(el);
+        setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, durationMs || 8000);
+    } catch (e) { console.warn(message); }
+};
+
+// Unique within the page (the old 4-digit random ids collided after a few dozen drops).
+window.newDropId = function() {
+    window._dropCounter += 1;
+    let rand;
+    if (window.crypto && window.crypto.getRandomValues) rand = window.crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 4);
+    else rand = Math.random().toString(36).slice(2, 6);
+    return `ORD-${window._dropCounter}-${rand}`;
+};
+
+window.authHeaders = function(extra) {
+    const key = localStorage.getItem('uyo_license_key');
+    const headers = { 'Content-Type': 'application/json' };
+    if (key) headers['x-license-key'] = key;
+    return Object.assign(headers, extra || {});
+};
+
+// Returns true when the session is invalid and the user has been sent to the login page.
+window.handleAuthFailure = function(status) {
+    if (status === 401) {
+        localStorage.removeItem('uyo_license_key');
+        window.location.href = "login.html";
+        return true;
+    }
+    return false;
+};
+
+// FastAPI 422 errors arrive as an array of objects; never print "[object Object]".
+window.formatApiError = function(body, fallback) {
+    const detail = body && body.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+        return detail.map(d => `${(d.loc || []).slice(1).join('.') || 'request'}: ${d.msg}`).join('; ');
+    }
+    if (detail) { try { return JSON.stringify(detail); } catch (e) { /* fall through */ } }
+    return fallback || 'Unknown error';
+};
+
+// The API reports problems by position ("Location 3 ..."); name the drop the dispatcher entered.
+window.describeLocationErrors = function(message) {
+    return String(message).replace(/Location (\d+)/g, (match, n) => {
+        const i = parseInt(n, 10);
+        if (i === 0) return 'the depot';
+        const d = window.dynamicDeliveries[i - 1];
+        if (!d) return match;
+        const who = d.customer_name && d.customer_name !== 'Unknown Customer' ? ` (${d.customer_name})` : '';
+        return `drop ${d.id}${who}`;
+    });
+};
+
+// Call this once with the /solve-dynamic response.
+window.captureSolveResult = function(data) {
+    window.currentMetrics = (data && data.metrics) || null;
+    window.currentAssumptions = (data && data.assumptions) || null;
+    window.currentWarnings = (data && data.warnings) || [];
+    if (data && data.physics_engine) window.currentPhysicsEngine = data.physics_engine;
+    if (window.currentWarnings.length) console.warn("Solve warnings:", window.currentWarnings);
+};
+
 // --- 0.1 TELEMETRY INTERPOLATION ENGINE (SURCON STANDARD) ---
 L.Marker.include({
     slideTo: function(destination, durationMs) {
@@ -53,6 +174,11 @@ L.Marker.include({
         
         if (this._slideFrame) {
             cancelAnimationFrame(this._slideFrame);
+        }
+
+        if (!(durationMs > 0)) {                 // no animation requested
+            this.setLatLng(end);
+            return;
         }
         
         const animate = (currentTime) => {
@@ -96,19 +222,24 @@ window.createLiveIcon = function(vId, isBike) {
 };
 
 window.fetchLifetimeMetrics = async function() {
+    if (!localStorage.getItem('uyo_license_key')) return;
     try {
+        // cache:'no-store' + the _t query value replace the old Cache-Control request header,
+        // which the API's CORS policy does not need to allow any more.
         const response = await fetch(`${window.API_BASE_URL}/api/vrp/history?_t=${Date.now()}`, {
             method: 'GET',
-            headers: { 
-                'Content-Type': 'application/json',
-                'x-license-key': localStorage.getItem('uyo_license_key'),
-                'Cache-Control': 'no-cache'
-            }
+            cache: 'no-store',
+            headers: window.authHeaders()
         });
         
-        if (response.status === 401) {
-            localStorage.removeItem('uyo_license_key');
-            window.location.href = "login.html";
+        if (window.handleAuthFailure(response.status)) return;
+
+        if (response.status === 402) {
+            // Not a logout: the renewal flow (Optimize Routes -> 402 -> renew) must stay reachable.
+            if (!window._notified['license-expired']) {
+                window._notified['license-expired'] = true;
+                window.showToast("Your subscription has expired. Renew to keep optimising routes.", 12000);
+            }
             return;
         }
 
@@ -128,40 +259,50 @@ window.updateBIMetrics = function(isSession = false) {
     const statCo2El = document.getElementById('stat-co2');
 
     const pe = window.currentPhysicsEngine || {};
+    const a = window.currentAssumptions;
+    const assumptionNote = a
+        ? `Estimate: ${a.km_per_liter} km/L, ₦${a.fuel_price_ngn_per_liter}/L, ${a.co2_kg_per_liter} kg CO2/L`
+        : 'Estimate based on configured fuel assumptions';
 
     if (isSession) {
         if (statFuelEl) {
-            statFuelEl.previousElementSibling.innerText = "Session Fuel Saved";
+            statFuelEl.previousElementSibling.innerText = "Session Fuel Saved (est.)";
             const sessionFuelValue = parseFloat(pe.fuel_saved) || 0; 
             statFuelEl.innerText = `₦${sessionFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#fbbf24"; 
+            statFuelEl.title = assumptionNote;
         }
         if (statEffEl) {
-            statEffEl.previousElementSibling.innerText = "Session Efficiency";
+            statEffEl.previousElementSibling.innerText = "Session Distance Saved";
             statEffEl.innerText = `${(parseFloat(pe.efficiency) || 0).toFixed(1)}%`;
             statEffEl.style.color = "#fbbf24";
+            statEffEl.title = "Distance saved versus visiting the same stops in the order entered";
         }
         if (statCo2El) {
-            statCo2El.previousElementSibling.innerText = "Session CO2 Saved";
+            statCo2El.previousElementSibling.innerText = "Session CO2 Saved (est.)";
             statCo2El.innerText = `${(parseFloat(pe.co2_saved) || 0).toFixed(2)} kg`;
             statCo2El.style.color = "#fbbf24";
+            statCo2El.title = assumptionNote;
         }
     } else {
         if (statFuelEl) {
-            statFuelEl.previousElementSibling.innerText = "Lifetime Fuel";
+            statFuelEl.previousElementSibling.innerText = "Lifetime Fuel (est.)";
             const lifeFuelValue = parseFloat(window.lifetimeStats.fuel) || 0; 
             statFuelEl.innerText = `₦${lifeFuelValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             statFuelEl.style.color = "#4ade80"; 
+            statFuelEl.title = assumptionNote;
         }
         if (statEffEl) {
-            statEffEl.previousElementSibling.innerText = "Avg Efficiency";
+            statEffEl.previousElementSibling.innerText = "Avg Distance Saved";
             statEffEl.innerText = `${(parseFloat(window.lifetimeStats.efficiency) || 0).toFixed(1)}%`;
             statEffEl.style.color = "#60a5fa"; 
+            statEffEl.title = "Average of reported per-mission distance saved versus entry order";
         }
         if (statCo2El) {
-            statCo2El.previousElementSibling.innerText = "Lifetime CO2";
+            statCo2El.previousElementSibling.innerText = "Lifetime CO2 (est.)";
             statCo2El.innerText = `${(parseFloat(window.lifetimeStats.co2) || 0).toFixed(1)} kg`;
             statCo2El.style.color = "#f87171"; 
+            statCo2El.title = assumptionNote;
         }
     }
     
@@ -171,17 +312,17 @@ window.updateBIMetrics = function(isSession = false) {
     }
 };
 
+// Builds the driver link. URLSearchParams encodes each value exactly once.
+window.buildDriverUrl = function(vehicleId, gmapsUrl, driverToken) {
+    const q = new URLSearchParams();
+    q.set('v', String(vehicleId));
+    if (driverToken) q.set('t', driverToken);
+    if (gmapsUrl) q.set('map', gmapsUrl);
+    if (window.RESEARCH_MODE) q.set('research', '1');   // field tests: driver page will not open Maps
+    return `https://uyologistics.com/driver.html?${q.toString()}`;
+};
+
 window.deployMission = async function(vehicleId, gmapsUrl) {
-        
-    const trackingUrl = `https://uyologistics.com/driver.html?v=${vehicleId}&map=${encodeURIComponent(gmapsUrl)}`;
-    
-    const whatsappMessage = encodeURIComponent(
-        `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
-        `📦 *Vehicle ID:* ${vehicleId}\n` +
-        `📍 *Mission:* Optimized multi-stop delivery route generated by Command Center.\n\n` +
-        `📱 *Open Live Tracking & Navigation:* \n${trackingUrl}`
-    );
-    const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
 
     const userChoice = confirm(
         `📡 DEPLOY MISSION: ${vehicleId}\n\n` +
@@ -197,50 +338,86 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
 
     const newTab = window.open('about:blank', '_blank'); 
 
+    let claimedMetrics = false;   // did THIS call take the once-per-session savings?
+    let dispatched = false;       // did the server accept the mission?
+
     try {
         // --- NEW: Fetching the enriched structured dictionary instead of raw OSRM path arrays ---
         const routePlan = window.activeRoutePlans[vehicleId];
         if (!routePlan) throw new Error("Route plan metadata missing from memory.");
+        if (routePlan.length > 500) throw new Error("A mission can have at most 500 stops.");
         
         const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
+
+        // Normalise to what the API validates: finite coordinates and bounded text.
+        const cleanPlan = routePlan.map((wp, i) => {
+            const lat = parseFloat(wp.lat);
+            const lng = parseFloat(wp.lng ?? wp.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                throw new Error(`Stop ${i} has invalid coordinates.`);
+            }
+            return {
+                sequence: Number.isInteger(wp.sequence) ? wp.sequence : i,
+                lat, lng,
+                customer_name: String(wp.customer_name ?? 'Unknown Customer').slice(0, 120),
+                phone: String(wp.phone ?? 'N/A').slice(0, 32),
+                order_id: String(wp.order_id ?? 'N/A').slice(0, 64)
+            };
+        });
+
         const peRaw = window.currentPhysicsEngine || {};
-        
         let dispatchFuel = 0;
         let dispatchCo2 = 0;
         let dispatchEff = 0;
+        let dispatchKm = null;
 
         if (!window.sessionMetricsCommitted) {
             dispatchFuel = safeFloat(peRaw.fuel_saved);
             dispatchCo2 = safeFloat(peRaw.co2_saved);
             dispatchEff = safeFloat(peRaw.efficiency);
-            window.sessionMetricsCommitted = true; 
+            const km = parseFloat(window.currentMetrics && window.currentMetrics.distance_km);
+            dispatchKm = Number.isFinite(km) ? km : null;
+            window.sessionMetricsCommitted = true;   // claim before awaiting so a double-click cannot double count
+            claimedMetrics = true;
         }
-
-        // Map the routePlan waypoints into flat [lat, lng] pairs for backward compatibility
-        const fallbackCoords = routePlan.map(wp => [wp.lat, wp.lng]);
 
         const payload = {
             vehicle_id: String(vehicleId),
-            route_plan: routePlan, // UPDATED: Conforms to List[RouteWaypoint]
-            route_coords: fallbackCoords, // Satisfies strict legacy backend validation
+            route_plan: cleanPlan,                                  // List[RouteWaypoint]
+            route_coords: cleanPlan.map(wp => [wp.lat, wp.lng]),    // legacy fallback
             fuel_saved: dispatchFuel, 
             co2_saved: dispatchCo2,
             efficiency: dispatchEff
         };
+        if (dispatchKm !== null) payload.distance_km = dispatchKm;  // measured by the API, not estimated here
         
         const response = await fetch(`${window.API_BASE_URL}/api/vrp/dispatch`, {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'x-license-key': localStorage.getItem('uyo_license_key')
-            },
+            headers: window.authHeaders(),
             body: JSON.stringify(payload)
         });
         
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
-            throw new Error(`Server Code ${response.status}: ${errData.detail || response.statusText}`);
+            if (window.handleAuthFailure(response.status)) return;
+            throw new Error(`Server Code ${response.status}: ${window.formatApiError(errData, response.statusText)}`);
         }
+
+        dispatched = true;
+        const result = await response.json().catch(() => ({}));
+        const driverToken = result.driver_token || null;
+        if (!driverToken) console.warn("API did not return a driver token (older backend). The link will be untracked-by-token.");
+        if (result.logged === false) console.warn("Mission deployed but history could not be logged.");
+
+        // The link is built AFTER dispatch because it carries the per-mission token.
+        const trackingUrl = window.buildDriverUrl(vehicleId, gmapsUrl, driverToken);
+        const whatsappMessage = encodeURIComponent(
+            `🚀 *UYO LOGISTICS MISSION DEPLOYED*\n\n` +
+            `📦 *Vehicle ID:* ${vehicleId}\n` +
+            `📍 *Mission:* Optimized multi-stop delivery route generated by Command Center.\n\n` +
+            `📱 *Open Live Tracking & Navigation:* \n${trackingUrl}`
+        );
+        const whatsappLink = `https://wa.me/?text=${whatsappMessage}`;
 
         console.log(`✅ Mission Deploy Success: ${vehicleId}. Awaiting Database Commit...`);
         
@@ -258,9 +435,13 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             window.connectLiveFleet(); 
         }
 
+        // Exact id match: 'UYO-VEH-1' must not also disable 'UYO-VEH-10' ... 'UYO-VEH-15'.
+        const idPattern = new RegExp(`['"]${window.escapeRegex(vehicleId)}['"]`);
         const btns = document.querySelectorAll('button');
         btns.forEach(btn => {
-            if (btn.innerText.includes('Deploy Live Mission') && btn.getAttribute('onclick')?.includes(vehicleId)) {
+            const exactById = btn.dataset && btn.dataset.deployVehicle === vehicleId;
+            const exactByOnclick = idPattern.test(btn.getAttribute('onclick') || '');
+            if (btn.innerText.includes('Deploy Live Mission') && (exactById || exactByOnclick)) {
                 btn.innerHTML = `<i class="fa-solid fa-satellite-dish fa-beat" style="color: #4ade80;"></i> Tracking Live`;
                 btn.style.backgroundColor = "#166534"; 
                 btn.style.cursor = "not-allowed";
@@ -268,149 +449,247 @@ window.deployMission = async function(vehicleId, gmapsUrl) {
             }
         });
 
-        newTab.location.href = useWhatsApp ? whatsappLink : trackingUrl;
+        const target = useWhatsApp ? whatsappLink : trackingUrl;
+        if (newTab && !newTab.closed) {
+            newTab.location.href = target;
+        } else {
+            // Pop-up blocked: the mission IS deployed, so hand over the link instead of failing.
+            try { await navigator.clipboard.writeText(trackingUrl); } catch (e) { /* clipboard may be unavailable */ }
+            alert(`Mission deployed. Your browser blocked the pop-up, so send the driver this link:\n\n${trackingUrl}`);
+        }
 
     } catch (err) {
-        newTab.close(); 
+        if (newTab && !newTab.closed) newTab.close(); 
         console.error("Critical Synchronization Error:", err);
-        alert(`❌ Deployment Failed!\n\n${err.message}`);
+        if (!dispatched) {
+            // Nothing was accepted by the server: give the session savings back so a retry still counts them.
+            if (claimedMetrics) window.sessionMetricsCommitted = false;
+            alert(`❌ Deployment Failed!\n\n${err.message}`);
+        } else {
+            alert(`⚠️ Mission ${vehicleId} was deployed, but the dashboard could not finish updating:\n\n${err.message}\n\nRefresh the page to see live tracking.`);
+        }
+    }
+};
+
+// --- LIVE TELEMETRY ---
+window._ws = { backoff: 1000, reconnectTimer: null, heartbeat: null, authFailed: false };
+
+window.syncRouteGeometry = async function(vId) {
+    const st = window.routeSyncState[vId] || (window.routeSyncState[vId] = { inFlight: false, retryAt: 0 });
+    if (st.inFlight || Date.now() < st.retryAt) return;     // at most one attempt per 15 s per vehicle
+    st.inFlight = true;
+    console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${vId}...`);
+    try {
+        const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
+            method: 'GET',
+            headers: window.authHeaders()
+        });
+        if (window.handleAuthFailure(syncRes.status)) return;
+        if (!syncRes.ok) throw new Error(`HTTP ${syncRes.status}`);
+        const syncData = await syncRes.json();
+        
+        if (syncData.active_missions && syncData.active_missions[vId]) {
+            const rawCoords = syncData.active_missions[vId].coords || [];
+            
+            // Safely extract lat/lng regardless of array format or enriched dict format
+            const extractedCoords = rawCoords.map(c => Array.isArray(c) ? c : [c.lat, c.lng]);
+            
+            L.polyline(extractedCoords, { 
+                color: '#f59e0b', 
+                weight: 4, 
+                opacity: 0.8, 
+                dashArray: '10, 10', 
+                pane: 'routePane' 
+            }).addTo(window.routeLayerGroup);
+            
+            window.activeDeployments[vId] = extractedCoords;
+            console.log(`✅ Global Sync Complete: Route drawn for ${vId}`);
+        }
+    } catch (err) {
+        console.warn("Global Sync Failed:", err);
+    } finally {
+        st.inFlight = false;
+        if (!window.activeDeployments[vId]) st.retryAt = Date.now() + 15000;
+    }
+};
+
+window.handleTelemetryMessage = async function(rawData) {
+    if (!rawData || typeof rawData !== 'object') return;
+    if (rawData.type === 'auth_ok' || rawData.type === 'pong') return;   // control frames
+
+    if (window.DEBUG_TELEMETRY) console.debug(`WS [${new Date().toISOString()}]`, rawData);
+
+    const payload = rawData.telemetry ? rawData.telemetry : rawData;
+    const vId = payload.vehicle_id || payload.id;
+    if (!vId) return;
+
+    // Mission finished: drop the marker (the API now includes status on the broadcast).
+    if (payload.status === 'completed') {
+        console.log(`🏁 Mission Completed for ${vId}`); 
+        const done = window.liveMarkers[vId];
+        if (done) {
+            if (done._slideFrame) cancelAnimationFrame(done._slideFrame);
+            window.map.removeLayer(done);
+            delete window.liveMarkers[vId];
+        }
+        delete window.lastTelemetry[vId];
+        return;
+    }
+
+    // Stop markers (Arrived / Departed) are events, not positions.
+    if (payload.event) {
+        (window.stopEvents[vId] = window.stopEvents[vId] || []).push({
+            event: payload.event, stop_seq: payload.stop_seq, ts: payload.event_ts || payload.server_ts
+        });
+        console.info(`📍 ${vId} ${payload.event} stop ${payload.stop_seq}`);
+        return;
+    }
+
+    // 🔴 STRICT SCHEMA FIX: API sends 'lat' and 'lon' (older senders used 'lng').
+    const markerLat = parseFloat(payload.lat);
+    const markerLng = parseFloat(payload.lng ?? payload.lon);
+    if (!Number.isFinite(markerLat) || !Number.isFinite(markerLng)) return;
+
+    // Ignore duplicates and out-of-order fixes within one driver session.
+    const prev = window.lastTelemetry[vId];
+    const seq = Number.isInteger(payload.seq) ? payload.seq : null;
+    if (prev && seq !== null && payload.session_id && prev.session === payload.session_id && seq <= prev.seq) return;
+    const nowMs = performance.now();
+    const gapMs = prev ? nowMs - prev.at : null;
+    window.lastTelemetry[vId] = {
+        session: payload.session_id || null,
+        seq: seq !== null ? seq : (prev ? prev.seq : -1),
+        at: nowMs
+    };
+
+    if (!window.activeDeployments[vId]) {
+        window.syncRouteGeometry(vId);   // not awaited: the marker must not wait for a network call
+    }
+
+    // Animate over the real spacing between updates (the old fixed 667 ms assumed 1.5 Hz).
+    const durationMs = gapMs === null ? 0 : Math.min(2000, Math.max(200, gapMs));
+    const acc = Number(payload.accuracy);
+    const lowAccuracy = Number.isFinite(acc) && acc > window.MAX_DISPLAY_ACCURACY_M;
+
+    // --- Hardware-Accelerated 60FPS JS Interpolation ---
+    if (window.liveMarkers[vId]) {
+        const marker = window.liveMarkers[vId];
+        
+        const el = marker.getElement();
+        if (el) {
+            el.style.transition = 'none'; 
+        }
+        
+        marker.slideTo([markerLat, markerLng], durationMs);
+        marker.setZIndexOffset(1000); 
+        marker.setOpacity(lowAccuracy ? 0.45 : 1);
+
+    } else {
+        const isBike = window.fleetRegistry[vId] !== undefined 
+                       ? window.fleetRegistry[vId] 
+                       : String(vId).toLowerCase().includes('bike');
+                       
+        window.liveMarkers[vId] = L.marker([markerLat, markerLng], {
+            icon: window.createLiveIcon(vId, isBike), 
+            pane: 'poiPane',
+            zIndexOffset: 1000,
+            opacity: lowAccuracy ? 0.45 : 1
+        }).addTo(window.map);
+    }
+    
+    // --- Strict Deviation Alert Mapping ---
+    if (payload.deviation_alert) {
+        const dotEl = document.getElementById(`ping-dot-${vId}`);
+        const badgeEl = document.getElementById(`ping-badge-${vId}`);
+        if (dotEl && badgeEl) {
+            dotEl.style.background = '#f97316'; 
+            dotEl.style.boxShadow = '0 0 25px #f97316';
+            dotEl.style.border = '3px solid #000000';
+            badgeEl.style.border = '1px solid #f97316';
+            badgeEl.style.color = '#f97316';
+        }
+        console.warn(`🚨 CRITICAL: ${vId} has deviated from the optimized route!`);
+    } else {
+        const isBike = window.fleetRegistry[vId] !== undefined 
+                       ? window.fleetRegistry[vId] 
+                       : String(vId).toLowerCase().includes('bike');
+        const markerColor = isBike ? '#28a745' : '#dc3545';
+        const dotEl = document.getElementById(`ping-dot-${vId}`);
+        const badgeEl = document.getElementById(`ping-badge-${vId}`);
+        if (dotEl && badgeEl) {
+            dotEl.style.background = markerColor; 
+            dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
+            dotEl.style.border = '2.5px solid white';
+            badgeEl.style.border = `1px solid ${markerColor}`;
+            badgeEl.style.color = 'white';
+        }
     }
 };
 
 window.connectLiveFleet = function() {
-    window.liveFleetSocket = new WebSocket(`${window.WS_BASE_URL}/ws/live-fleet`);
-    window.liveFleetSocket.onopen = function() { console.log("📡 Live Fleet Telemetry: Connected & Listening"); };
+    const existing = window.liveFleetSocket;
+    if (existing && (existing.readyState === WebSocket.CONNECTING || existing.readyState === WebSocket.OPEN)) return;
+    if (window._ws.authFailed) return;
+    const key = localStorage.getItem('uyo_license_key');
+    if (!key) return;
+
+    const socket = new WebSocket(`${window.WS_BASE_URL}/ws/live-fleet`);
+    window.liveFleetSocket = socket;
+
+    socket.onopen = function() {
+        // The API expects the licence key as the FIRST message (it is never relayed to other clients).
+        socket.send(JSON.stringify({ type: 'auth', license_key: key }));
+        window._ws.backoff = 1000;
+        clearInterval(window._ws.heartbeat);
+        window._ws.heartbeat = setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'ping' }));
+        }, 25000);
+        console.log("📡 Live Fleet Telemetry: Connected & Listening");
+    };
     
-    window.liveFleetSocket.onmessage = async function(event) {
+    socket.onmessage = function(event) {
         let rawData;
         try {
             rawData = JSON.parse(event.data);
         } catch (e) {
-            console.error("Failed to parse WebSocket JSON:", event.data);
+            console.error("Failed to parse WebSocket JSON.");
             return;
         }
-        
-        console.log(`🔥 RAW WS PING [${new Date().toISOString()}]:`, rawData);
-
-        const payload = rawData.telemetry ? rawData.telemetry : rawData;
-        const vId = payload.vehicle_id || payload.id;
-
-        // 🔴 STRICT SCHEMA FIX: Explicitly target the keys main.py sends (Patched for lon fallback)
-        const markerLat = parseFloat(payload.lat);
-        const markerLng = parseFloat(payload.lng || payload.lon);
-
-        if (isNaN(markerLat) || isNaN(markerLng) || !vId) {
-            if (payload.status === 'completed' && vId) {
-                console.log(`🏁 Mission Completed for ${vId}`); 
-                if (window.liveMarkers[vId]) {
-                    window.map.removeLayer(window.liveMarkers[vId]);
-                    delete window.liveMarkers[vId];
-                }
-            }
-            return; 
-        }
-
-        if (!window.activeDeployments[vId] && payload.status !== 'completed') {
-            console.log(`🔄 Global Sync Triggered: Fetching missing route geometry for ${vId}...`);
-            try {
-                const syncRes = await fetch(`${window.API_BASE_URL}/api/vrp/active-missions`, {
-                    method: 'GET',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'x-license-key': localStorage.getItem('uyo_license_key') 
-                    }
-                });
-                const syncData = await syncRes.json();
-                
-                if (syncData.active_missions && syncData.active_missions[vId]) {
-                    const rawCoords = syncData.active_missions[vId].coords;
-                    
-                    // Safely extract lat/lng regardless of array format or enriched dict format
-                    const extractedCoords = rawCoords.map(c => Array.isArray(c) ? c : [c.lat, c.lng]);
-                    
-                    L.polyline(extractedCoords, { 
-                        color: '#f59e0b', 
-                        weight: 4, 
-                        opacity: 0.8, 
-                        dashArray: '10, 10', 
-                        pane: 'routePane' 
-                    }).addTo(window.routeLayerGroup);
-                    
-                    window.activeDeployments[vId] = extractedCoords;
-                    console.log(`✅ Global Sync Complete: Route drawn for ${vId}`);
-                }
-            } catch (err) {
-                console.warn("Global Sync Failed:", err);
-            }
-        }
-
-        // --- Hardware-Accelerated 60FPS JS Interpolation ---
-        if (window.liveMarkers[vId]) {
-            const marker = window.liveMarkers[vId];
-            
-            const el = marker.getElement();
-            if (el) {
-                el.style.transition = 'none'; 
-            }
-            
-            marker.slideTo([markerLat, markerLng], 667);
-            marker.setZIndexOffset(1000); 
-
-        } else {
-            const isBike = window.fleetRegistry[vId] !== undefined 
-                           ? window.fleetRegistry[vId] 
-                           : String(vId).toLowerCase().includes('bike');
-                           
-            window.liveMarkers[vId] = L.marker([markerLat, markerLng], {
-                icon: window.createLiveIcon(vId, isBike), 
-                pane: 'poiPane',
-                zIndexOffset: 1000
-            }).addTo(window.map);
-        }
-        
-        // --- Strict Deviation Alert Mapping ---
-        if (payload.deviation_alert) {
-            const dotEl = document.getElementById(`ping-dot-${vId}`);
-            const badgeEl = document.getElementById(`ping-badge-${vId}`);
-            if (dotEl && badgeEl) {
-                dotEl.style.background = '#f97316'; 
-                dotEl.style.boxShadow = '0 0 25px #f97316';
-                dotEl.style.border = '3px solid #000000';
-                badgeEl.style.border = '1px solid #f97316';
-                badgeEl.style.color = '#f97316';
-            }
-            console.warn(`🚨 CRITICAL: ${vId} has deviated from the optimized route!`);
-        } else {
-            const isBike = window.fleetRegistry[vId] !== undefined 
-                           ? window.fleetRegistry[vId] 
-                           : String(vId).toLowerCase().includes('bike');
-            const markerColor = isBike ? '#28a745' : '#dc3545';
-            const dotEl = document.getElementById(`ping-dot-${vId}`);
-            const badgeEl = document.getElementById(`ping-badge-${vId}`);
-            if (dotEl && badgeEl) {
-                dotEl.style.background = markerColor; 
-                dotEl.style.boxShadow = `0 0 15px ${markerColor}`;
-                dotEl.style.border = '2.5px solid white';
-                badgeEl.style.border = `1px solid ${markerColor}`;
-                badgeEl.style.color = 'white';
-            }
-        }
-        
-        if (payload.status === 'completed') { 
-            console.log(`🏁 Mission Completed for ${vId}`); 
-        }
+        window.handleTelemetryMessage(rawData);
     };
-    window.liveFleetSocket.onerror = function(error) { console.error("WebSocket Error:", error); };
+
+    socket.onclose = function(ev) {
+        clearInterval(window._ws.heartbeat);
+        if (window.liveFleetSocket !== socket) return;          // closed on purpose, or replaced by a newer socket
+        if (ev.code === 4401) {                                  // licence rejected (invalid, expired, or rate-limited)
+            window._ws.authFailed = true;
+            window.notifyOnce('ws-auth', "Live tracking could not be authorised. Check your subscription or sign in again, then reload.");
+            return;
+        }
+        const delay = window._ws.backoff;
+        window._ws.backoff = Math.min(30000, delay * 2);
+        console.warn(`Live Fleet socket closed (code ${ev.code}). Reconnecting in ${Math.round(delay / 1000)} s.`);
+        clearTimeout(window._ws.reconnectTimer);
+        window._ws.reconnectTimer = setTimeout(window.connectLiveFleet, delay);
+    };
+
+    socket.onerror = function(error) { console.error("WebSocket Error:", error); };
 };
 
 window.triggerTrafficRecalculate = async function(vehicleId) {
+    // The API's /push-reroute is not implemented (it returns 501), and /solve-dynamic spends the
+    // client's paid stop quota. Until re-routing exists, do not burn stops for a result nobody receives.
+    if (!window.FEATURES.reroute) {
+        alert("Live re-routing is not available yet. Your current route stays active; contact dispatch to change it.");
+        return;
+    }
+
     const activeCoords = window.activeDeployments[vehicleId];
     if (!activeCoords) {
         alert("Cannot recalculate: No active GPS data found for this vehicle.");
         return;
     }
 
-    const currentLicenseKey = localStorage.getItem('uyo_license_key');
     const btn = document.getElementById(`recalc-btn-${vehicleId}`);
     
     try {
@@ -430,10 +709,7 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
 
         const solveRes = await fetch(`${window.API_BASE_URL}/api/vrp/solve-dynamic`, { 
             method: 'POST', 
-            headers: { 
-                'Content-Type': 'application/json',
-                'x-license-key': currentLicenseKey
-            }, 
+            headers: window.authHeaders(), 
             body: JSON.stringify({ 
                 depot: window.depotLocation, 
                 deliveries: remainingDeliveries, 
@@ -441,8 +717,10 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
             }) 
         });
 
+        if (window.handleAuthFailure(solveRes.status)) return;
         if (!solveRes.ok) throw new Error("Traffic Engine Failed.");
         const data = await solveRes.json();
+        window.captureSolveResult(data);
         
         if (data.traffic_multiplier > 1.0) {
             console.warn(`⚠️ High Traffic Detected! Penalty applied: ${data.traffic_multiplier}x`);
@@ -454,10 +732,7 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
 
         const pushRes = await fetch(`${window.API_BASE_URL}/api/vrp/push-reroute`, {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'x-license-key': currentLicenseKey 
-            },
+            headers: window.authHeaders(),
             body: JSON.stringify({
                 vehicle_id: vehicleId,
                 new_gmaps_url: encodeURIComponent(newMapUrl)
@@ -466,6 +741,10 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
 
         if (pushRes.ok) {
             alert(`✅ New Traffic-Aware Route Sent to ${vehicleId} Driver!`);
+        } else if (pushRes.status === 501) {
+            alert("Re-routing is not implemented on the server yet.");
+        } else {
+            throw new Error(`Push failed (${pushRes.status}).`);
         }
 
     } catch (err) {
@@ -479,8 +758,17 @@ window.triggerTrafficRecalculate = async function(vehicleId) {
     }
 };
 
+// CSV cell: neutralise spreadsheet formulas and quote when needed.
+window.csvCell = function(value) {
+    let s = value === null || value === undefined ? '' : String(value);
+    if (typeof value === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;   // formula-injection guard
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
 window.downloadSurveyManifest = function(routeData, opIntelData) {
-    let csvContent = "\uFEFFVehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Inventory Load,Travel Leg (Mins),Status\n";
+    opIntelData = opIntelData || {};
+    // "Cumulative Time" is the running clock from shift start (it was mislabelled "Travel Leg").
+    let csvContent = "\uFEFFVehicle ID,Vehicle Type,Stop Sequence,Estimated Arrival (ETA),Internal Node ID,Load After Stop,Cumulative Time (Mins),Status\n";
 
     const routesArray = routeData.routes || routeData.optimized_routes || [];
     
@@ -509,7 +797,7 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
             let status = "On Route";
             if (stop.stop_sequence === maxSeq) status = "Return to Depot";
 
-            let row = [
+            csvContent += [
                 vehicleId,
                 vehicleType,
                 stop.stop_sequence,
@@ -518,23 +806,39 @@ window.downloadSurveyManifest = function(routeData, opIntelData) {
                 stop.demand || stop.weight_load_after_stop || stop.inventory_load || 0,
                 Number(stop.cumulative_mins || 0).toFixed(2),
                 status
-            ].join(",");
-            csvContent += row + "\n";
+            ].map(window.csvCell).join(",") + "\n";
         });
     });
+
+    const summary = (label, value) => csvContent += [label, value, '', '', '', '', '', ''].map(window.csvCell).join(",") + "\n";
 
     csvContent += ",,,,,,,\n"; 
     csvContent += "--- EXECUTIVE BI SUMMARY ---,,,,,,,\n";
     
-    csvContent += `Total Orders Dispatched,"${opIntelData.drops || 0} Drops",,,,,,\n`;
-    csvContent += `Total Fleet Operation Time,"${opIntelData.total_mins || 0} Mins",,,,,,\n`;
-    csvContent += `Estimated Fuel Savings,"${opIntelData.fuel_saved || '₦0'}",,,,,,\n`;
-    csvContent += `Fleet Efficiency Score,"${opIntelData.efficiency || '0%'}",,,,,,\n`;
-    csvContent += `CO2 Emission Offset,"${opIntelData.co2_saved || '0 kg'}",,,,,,\n`;
+    summary("Total Orders Dispatched", `${opIntelData.drops || 0} Drops`);
+    summary("Total Fleet Operation Time", `${opIntelData.total_mins || 0} Mins`);
+
+    const m = window.currentMetrics;
+    if (m) {
+        summary("Measured Route Distance (km)", m.distance_km);
+        summary("Baseline: Same Stops In Entry Order (km)", m.baseline_input_order_km);
+        summary("Baseline: Nearest Neighbour (km)", m.baseline_nearest_neighbour_km);
+        summary("Distance Saved vs Entry Order (%)", m.reduction_vs_input_order_pct);
+        summary("Distance Saved vs Nearest Neighbour (%)", m.reduction_vs_nearest_neighbour_pct);
+    }
+
+    summary("Estimated Fuel Savings (est.)", opIntelData.fuel_saved || '₦0');
+    summary("Fleet Distance-Saved Score", opIntelData.efficiency || '0%');
+    summary("CO2 Emission Offset (est.)", opIntelData.co2_saved || '0 kg');
+
+    const a = window.currentAssumptions;
+    if (a) {
+        summary("Estimate Assumptions", `${a.km_per_liter} km/L; NGN ${a.fuel_price_ngn_per_liter}/L; ${a.co2_kg_per_liter} kg CO2/L`);
+    }
     
     const now = new Date();
     const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
-    csvContent += `Optimization Timestamp,"${timestamp}",,,,,,\n`;
+    summary("Optimization Timestamp", timestamp);
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
@@ -570,6 +874,7 @@ if (!activeLicenseKey) {
         }
     })
     .then(response => {
+        // 401 = unknown key. 402 (expired) deliberately does NOT log out, so the renewal prompt stays reachable.
         if (response.status === 401 || response.status === 403) {
             console.error("❌ Background Kill-Switch Triggered: License Expired.");
             localStorage.removeItem('uyo_license_key');
@@ -588,7 +893,7 @@ if (!activeLicenseKey) {
 // ==============================================================================
 function bootCommandCenter() {
     
-    console.log("🚀 Uyo Logistics Engine v2.5.5 LOADED - Unified Telemetry Active");
+    console.log("🚀 Uyo Logistics Engine v2.6.0 LOADED - Unified Telemetry Active");
 
     const uyoCenter = [5.0377, 7.9128];
 
@@ -778,8 +1083,9 @@ function bootCommandCenter() {
                 pointToLayer: styleConfig.pointToLayer || null,
                 onEachFeature: (feature, layer) => {
                     if (styleConfig.interactive !== false) {
-                        let popup = `<strong class="text-blue-600 uppercase tracking-widest text-xs">${endpoint.replace('/', '')} DATA</strong><br>`;
-                        for (let key in feature.properties) { if (feature.properties[key]) popup += `<b class="text-gray-700 capitalize">${key}:</b> ${feature.properties[key]}<br>`; }
+                        // Feature properties come from OSM / Foursquare / the database: never trust them as HTML.
+                        let popup = `<strong class="text-blue-600 uppercase tracking-widest text-xs">${window.escapeHtml(endpoint.replace('/', ''))} DATA</strong><br>`;
+                        for (let key in feature.properties) { if (feature.properties[key]) popup += `<b class="text-gray-700 capitalize">${window.escapeHtml(key)}:</b> ${window.escapeHtml(feature.properties[key])}<br>`; }
                         layer.bindPopup(popup);
                     }
                 }
@@ -833,6 +1139,21 @@ function bootCommandCenter() {
         console.log(`🗑️ Removed Drop: ${dropId}`);
     };
 
+    // Shared by the map-click and search flows. Text is bounded to what the API accepts and escaped for display.
+    function buildDropPopup(dropId, custName, custPhone, parsedWeight) {
+        return `
+            <div style="text-align: center;">
+                <b style="color: #1f2937;">Order: ${window.escapeHtml(dropId)}</b><br>
+                <span style="font-size: 12px; color: #3b82f6;"><b>${window.escapeHtml(custName)}</b></span><br>
+                <span style="font-size: 11px; color: #4b5563;">${window.escapeHtml(custPhone)}</span><br>
+                <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${window.escapeHtml(parsedWeight)} kg</span><br>
+                <button onclick="window.removePin('${window.escapeHtml(dropId)}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                    <i class="fa-solid fa-trash"></i> Remove Drop
+                </button>
+            </div>
+        `;
+    }
+
     // --- 🔴 SURVEY-GRADE FIX: Strict Mathematical Interception ---
     // Removed dependency on GeoJSON boundaryLayer to prevent "click-trap" bugs.
     window.map.on('click', function(e) {
@@ -841,8 +1162,8 @@ function bootCommandCenter() {
             return; 
         }
         
-        let custName = prompt("Enter Customer Name (or leave blank for Unknown):", "") || "Unknown Customer";
-        let custPhone = prompt("Enter Customer Phone Number:", "") || "N/A";
+        let custName = String(prompt("Enter Customer Name (or leave blank for Unknown):", "") || "Unknown Customer").trim().slice(0, 120) || "Unknown Customer";
+        let custPhone = String(prompt("Enter Customer Phone Number:", "") || "N/A").trim().slice(0, 32) || "N/A";
         let weightInput = prompt("Enter parcel weight in kg for this stop (e.g., 2, 15, 30):", "1");
         let parsedWeight = parseInt(weightInput, 10);
         if (isNaN(parsedWeight) || parsedWeight <= 0) {
@@ -852,7 +1173,7 @@ function bootCommandCenter() {
         const cleanLat = parseFloat(e.latlng.lat.toFixed(6));
         const cleanLng = parseFloat(e.latlng.lng.toFixed(6));
         
-        const dropId = "ORD-" + Math.floor(Math.random() * 10000);
+        const dropId = window.newDropId();
         window.dynamicDeliveries.push({ 
             id: dropId, 
             lat: cleanLat, 
@@ -862,17 +1183,7 @@ function bootCommandCenter() {
             phone: custPhone 
         });
         
-        const popupContent = `
-            <div style="text-align: center;">
-                <b style="color: #1f2937;">Order: ${dropId}</b><br>
-                <span style="font-size: 12px; color: #3b82f6;"><b>${custName}</b></span><br>
-                <span style="font-size: 11px; color: #4b5563;">${custPhone}</span><br>
-                <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
-                <button onclick="window.removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                    <i class="fa-solid fa-trash"></i> Remove Drop
-                </button>
-            </div>
-        `;
+        const popupContent = buildDropPopup(dropId, custName, custPhone, parsedWeight);
 
         L.marker([cleanLat, cleanLng], { 
             dropId: dropId,
@@ -936,17 +1247,21 @@ function bootCommandCenter() {
         const lowerQuery = query.toLowerCase();
 
         try {
-            poiLayer.eachLayer(layer => {
-                const props = layer?.feature?.properties;
-                if (!props) return; 
-                
-                const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
-                if (poiName.includes(lowerQuery)) {
-                    combinedResults.push({
-                        lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
-                        name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
-                    });
-                }
+            // L.geoJSON nests the features one level below the layer group, so look inside each group.
+            poiLayer.eachLayer(group => {
+                const visit = (layer) => {
+                    const props = layer?.feature?.properties;
+                    if (!props || typeof layer.getLatLng !== 'function') return; 
+                    
+                    const poiName = String(props.name || props.poi_name || props.title || '').toLowerCase();
+                    if (poiName.includes(lowerQuery)) {
+                        combinedResults.push({
+                            lat: layer.getLatLng().lat, lng: layer.getLatLng().lng,
+                            name: props.name || query, address: "Verified Local Database", source: "LOCAL", icon: "fa-database"
+                        });
+                    }
+                };
+                if (group && typeof group.eachLayer === 'function') group.eachLayer(visit); else visit(group);
             });
 
             const searchPromises = [];
@@ -966,30 +1281,36 @@ function bootCommandCenter() {
                 }).catch(err => console.warn("Nominatim failed:", err))
             );
 
-            // 🔴 SECURITY FIX: Redacted hardcoded API key to clear GitHub Secret Alert
-            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY || "AIzaSyA9Y339K4gDbQGQDSzWKppq2pmUvxODiho"; 
+            // 🔴 SECURITY FIX: no key lives in this file any more. Provide window.ENV_GOOGLE_API_KEY from a
+            // deployment-time script, and RESTRICT that key by HTTP referrer and to the Places API (a browser key is
+            // visible to anyone). Without it, Google results are skipped and the other sources still work.
+            const GOOGLE_API_KEY = window.ENV_GOOGLE_API_KEY;
             const locationRestriction = { rectangle: { low: { latitude: 4.8000, longitude: 7.7000 }, high: { latitude: 5.2500, longitude: 8.2000 } } };
             
-            searchPromises.push(
-                fetch(`https://places.googleapis.com/v1/places:searchText`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_API_KEY, 'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' },
-                    body: JSON.stringify({ textQuery: lowerQuery.includes('uyo') ? query : `${query}, Uyo`, locationRestriction: locationRestriction })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data && data.places) {
-                        data.places.slice(0, 3).forEach(place => {
-                            if(place.location) {
-                                combinedResults.push({
-                                    lat: parseFloat(place.location.latitude), lng: parseFloat(place.location.longitude),
-                                    name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
-                                });
-                            }
-                        });
-                    }
-                }).catch(err => console.warn("Google failed:", err))
-            );
+            if (GOOGLE_API_KEY) {
+                searchPromises.push(
+                    fetch(`https://places.googleapis.com/v1/places:searchText`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_API_KEY, 'X-Goog-FieldMask': 'places.location,places.formattedAddress,places.displayName' },
+                        body: JSON.stringify({ textQuery: lowerQuery.includes('uyo') ? query : `${query}, Uyo`, locationRestriction: locationRestriction })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && data.places) {
+                            data.places.slice(0, 3).forEach(place => {
+                                if(place.location) {
+                                    combinedResults.push({
+                                        lat: parseFloat(place.location.latitude), lng: parseFloat(place.location.longitude),
+                                        name: place.displayName ? place.displayName.text : query, address: place.formattedAddress ? place.formattedAddress.split(',')[0] : "Uyo", source: "GOOGLE", icon: "fa-google"
+                                    });
+                                }
+                            });
+                        }
+                    }).catch(err => console.warn("Google failed:", err))
+                );
+            } else {
+                console.info("Google Places search skipped: window.ENV_GOOGLE_API_KEY is not set.");
+            }
 
             await Promise.allSettled(searchPromises);
 
@@ -1009,7 +1330,7 @@ function bootCommandCenter() {
                 dropdownMenu.innerHTML = `
                     <div style="padding:15px; text-align:center; color:#f87171; font-size:12px;">
                         <i class="fa-solid fa-triangle-exclamation mb-2 text-lg"></i><br>
-                        No verified addresses found for <b>"${query}"</b> inside the operational perimeter.
+                        No verified addresses found for <b>"${window.escapeHtml(query)}"</b> inside the operational perimeter.
                     </div>
                 `;
                 dropdownMenu.style.display = 'block';
@@ -1024,10 +1345,11 @@ function bootCommandCenter() {
                 
                 let sourceColor = item.source === 'LOCAL' ? '#4ade80' : (item.source === 'NOMINATIM' ? '#60a5fa' : '#f87171');
                 
+                // name/address come from OSM, Google or the database: always escaped.
                 opt.innerHTML = `
                     <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 10px;">
-                        <b style="font-size:13px; color:white;">${item.name}</b><br>
-                        <span style="font-size:10px; color:#9ca3af;">${item.address}</span>
+                        <b style="font-size:13px; color:white;">${window.escapeHtml(item.name)}</b><br>
+                        <span style="font-size:10px; color:#9ca3af;">${window.escapeHtml(item.address)}</span>
                     </div>
                     <span style="font-size:9px; font-weight:bold; color:${sourceColor}; border:1px solid ${sourceColor}; padding:2px 4px; border-radius:3px; flex-shrink: 0;">
                         <i class="fa-brands ${item.icon}"></i> ${item.source}
@@ -1039,15 +1361,15 @@ function bootCommandCenter() {
                     searchInput.value = '';
                     searchInput.focus();
                     
-                    let custName = prompt(`Enter Customer Name for ${item.name} (or leave blank):`, "Unknown Customer") || "Unknown Customer";
-                    let custPhone = prompt("Enter Customer Phone:", "N/A") || "N/A";
+                    let custName = String(prompt(`Enter Customer Name for ${item.name} (or leave blank):`, "Unknown Customer") || "Unknown Customer").trim().slice(0, 120) || "Unknown Customer";
+                    let custPhone = String(prompt("Enter Customer Phone:", "N/A") || "N/A").trim().slice(0, 32) || "N/A";
                     let weightInput = prompt(`Enter parcel weight in kg for ${item.name} (e.g., 2, 15, 30):`, "1");
                     let parsedWeight = parseInt(weightInput, 10);
                     if (isNaN(parsedWeight) || parsedWeight <= 0) {
                         parsedWeight = 1; 
                     }
                     
-                    const dropId = "ORD-" + Math.floor(Math.random() * 10000);
+                    const dropId = window.newDropId();
                     window.dynamicDeliveries.push({ 
                         id: dropId, 
                         lat: item.lat, 
@@ -1057,17 +1379,7 @@ function bootCommandCenter() {
                         phone: custPhone 
                     });
 
-                    const popupContent = `
-                        <div style="text-align: center;">
-                            <b style="color: #1f2937;">Order: ${dropId}</b><br>
-                            <span style="font-size: 12px; color: #3b82f6;"><b>${custName}</b></span><br>
-                            <span style="font-size: 11px; color: #4b5563;">${custPhone}</span><br>
-                            <span style="font-size: 11px; font-weight: bold; color: #28a745;">Weight: ${parsedWeight} kg</span><br>
-                            <button onclick="window.removePin('${dropId}')" style="margin-top: 8px; padding: 4px 8px; background-color: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                                <i class="fa-solid fa-trash"></i> Remove Drop
-                            </button>
-                        </div>
-                    `;
+                    const popupContent = buildDropPopup(dropId, custName, custPhone, parsedWeight);
 
                     L.marker([item.lat, item.lng], { 
                         dropId: dropId,
@@ -1114,18 +1426,26 @@ function bootCommandCenter() {
         window.activeRoutePlans = {}; // Reset enriched payloads
         window.activeDeploymentsMins = {};
         window.currentPhysicsEngine = {};
+        window.currentMetrics = null;
+        window.currentAssumptions = null;
+        window.currentWarnings = [];
+        window.lastTelemetry = {};
+        window.routeSyncState = {};
+        window.stopEvents = {};
         window.sessionMetricsCommitted = false; 
         
         if (typeof window.liveMarkers !== 'undefined') {
             for (let id in window.liveMarkers) {
+                if (window.liveMarkers[id]._slideFrame) cancelAnimationFrame(window.liveMarkers[id]._slideFrame);
                 if (window.map.hasLayer(window.liveMarkers[id])) window.map.removeLayer(window.liveMarkers[id]);
             }
             window.liveMarkers = {};
         }
 
         if (typeof window.liveFleetSocket !== 'undefined' && window.liveFleetSocket) {
-            window.liveFleetSocket.close();
-            window.liveFleetSocket = null;
+            const closing = window.liveFleetSocket;
+            window.liveFleetSocket = null;      // detach first so onclose does not auto-reconnect
+            closing.close();
             console.log("📡 Live Fleet Telemetry: Connection reset by 'Clear Pins'");
         }
 
@@ -1142,12 +1462,13 @@ function bootCommandCenter() {
         const trafficText = document.getElementById('traffic-text');
         const indicator = document.getElementById('traffic-indicator');
         
+        // The multiplier is a fixed time-of-day assumption in the API, not live traffic data.
         if (trafficText && indicator) {
             if (trafficMultiplier > 1.5) {
-                trafficText.innerText = `Heavy Congestion (${trafficMultiplier}x Penalty)`;
+                trafficText.innerText = `Peak-Hour Factor Applied (${trafficMultiplier}x)`;
                 indicator.className = "pulse-dot bg-red";
             } else {
-                trafficText.innerText = "Optimal Free-Flowing Traffic";
+                trafficText.innerText = `Standard Traffic Factor (${trafficMultiplier}x)`;
                 indicator.className = "pulse-dot bg-green";
             }
         }
@@ -1187,7 +1508,8 @@ function bootCommandCenter() {
                 { id: "BIKE-03", type: "bike", capacity: 10, speed_factor: 1.5, fixed_cost: 0, cost_per_km: 10 }
             ],
             van: [
-                { id: "VAN-01", type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 10000, cost_cost_per_km: 50 }
+                // was `cost_cost_per_km`, which the API ignores, so this van silently got cost_per_km = 1
+                { id: "VAN-01", type: "van", capacity: 50, speed_factor: 1.0, fixed_cost: 10000, cost_per_km: 50 }
             ]
         };
         let activeFleet = (vehicleChoice === 'all') ? null : fleetProfiles[vehicleChoice];
@@ -1212,11 +1534,10 @@ function bootCommandCenter() {
             clearTimeout(timeoutId); 
             
             if (!response.ok) {
-                let errorMsg = "Backend Routing Error";
-                try {
-                    const errorData = await response.json();
-                    errorMsg = errorData.detail || errorMsg;
-                } catch(e) {} 
+                let errorBody = {};
+                try { errorBody = await response.json(); } catch(e) {} 
+                // 422 detail is an array; "Location N" is translated into the drop the dispatcher entered.
+                const errorMsg = window.describeLocationErrors(window.formatApiError(errorBody, "Backend Routing Error"));
 
                 if (response.status === 402) {
                     if(confirm(`💳 PAYMENT REQUIRED:\n\n${errorMsg}\n\nWould you like to renew your subscription now?`)) {
@@ -1226,8 +1547,10 @@ function bootCommandCenter() {
                     alert(`❌ ACCESS DENIED:\n\n${errorMsg}`);
                     localStorage.removeItem('uyo_license_key');
                     window.location.href = "login.html";
-                } else if (response.status === 400 && typeof errorMsg === 'string' && errorMsg.toLowerCase().includes("valid sequence")) {
-                    throw new Error("OR-Tools Topology Failure:\n\nOne or more pins are dropped in a 'dead zone' too far from a mapped road. Please use the 'Remove Drop' button on your most recent pins and nudge them closer to a main street.");
+                } else if (response.status === 429) {
+                    alert("⚠️ Too many attempts. Please wait a few minutes and try again.");
+                } else if (response.status === 400 && /valid sequence/i.test(errorMsg)) {
+                    throw new Error("No feasible plan for these stops and vehicles.\n\nCheck parcel weights against vehicle capacity (a bike carries at most 10 stops) or choose a larger vehicle option.");
                 } else {
                     throw new Error(errorMsg);
                 }
@@ -1237,6 +1560,7 @@ function bootCommandCenter() {
             const data = await response.json();
             
             window.latestOptimizationResult = data;
+            window.captureSolveResult(data);   // measured distances, assumptions and warnings from the API
             
             const peRaw = data.physics_engine || {};
             window.currentPhysicsEngine = {
@@ -1244,6 +1568,11 @@ function bootCommandCenter() {
                 co2_saved: Number(peRaw.co2_saved) || 0,
                 efficiency: Number(peRaw.efficiency) || 0
             };
+
+            // "No fleet supplied" is expected when the dispatcher chose Mixed Fleet (Auto); show every other warning.
+            (data.warnings || [])
+                .filter(w => !(vehicleChoice === 'all' && /default fleet/i.test(w)))
+                .forEach(w => window.showToast(w, 10000));
             
             window.updateTelemetryUI(data);
             
@@ -1360,6 +1689,12 @@ function bootCommandCenter() {
             
             const gmapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originCoord[0]},${originCoord[1]}&destination=${destCoord[0]},${destCoord[1]}${waypointsStr ? '&waypoints=' + waypointsStr : ''}&travelmode=driving`;
             
+            // OSRM is used ONLY to draw road geometry. The kilometres and minutes on the card come from the API
+            // (measured on the same road network the plan was built on). If OSRM is unavailable the route is drawn as
+            // straight lines so the mission can still be deployed (previously the vehicle vanished from the list).
+            let routeCoords = null;
+            let osrmDistanceKm = null;
+            let osrmDurationMin = null;
             try {
                 await new Promise(resolve => setTimeout(resolve, 800)); 
                 let osrmData = null;
@@ -1370,97 +1705,110 @@ function bootCommandCenter() {
                 } catch (e1) { console.warn("Primary OSRM failed..."); }
 
                 if (!osrmData || osrmData.code !== "Ok") {
-                    const res2 = await fetch(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
-                    if (res2.ok) osrmData = await res2.json();
+                    try {
+                        const res2 = await fetch(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
+                        if (res2.ok) osrmData = await res2.json();
+                    } catch (e2) { console.warn("Fallback OSRM failed..."); }
                 }
                 
                 if (osrmData && osrmData.code === "Ok") {
-                    const distanceKm = parseFloat((osrmData.routes[0].distance / 1000).toFixed(2));
-                    const durationMin = (osrmData.routes[0].duration / 60).toFixed(1);
+                    osrmDistanceKm = osrmData.routes[0].distance / 1000;
+                    osrmDurationMin = osrmData.routes[0].duration / 60;
+                    routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                }
+            } catch (e) { 
+                console.warn("Road geometry unavailable.", e);
+            }
 
-                    const routeCoords = osrmData.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-                    
-                    // Maintain dense polyline for frontend interpolation logic
-                    window.activeDeployments[vId] = routeCoords;
-                    window.activeDeploymentsMins[vId] = parseFloat(durationMin);
+            const straightLinePreview = !routeCoords;
+            if (straightLinePreview) routeCoords = gpsPath;
 
-                    const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane' }).addTo(window.routeLayerGroup);
-                    
-                    // --- NEW: Map waypoints to the backend RouteWaypoint structure while rendering popups ---
-                    let currentRoutePlan = [];
-                    let sequenceCounter = 1;
-                    
-                    r.route.forEach((node, idx) => {
-                        const coords = locDict[node];
-                        const meta = metaDict[node] || { id: `DEPOT-${sequenceCounter}`, customer_name: 'Command Center Depot', phone: 'N/A' };
+            const apiKm = Number(r.distance_km);
+            const apiMin = Number(r.travel_time_min);
+            const distanceKm = (Number.isFinite(apiKm) ? apiKm : (osrmDistanceKm ?? 0)).toFixed(2);
+            const durationMin = (Number.isFinite(apiMin) ? apiMin : (osrmDurationMin ?? 0)).toFixed(1);
 
-                        if (coords) {
-                            // Construct the dictionary expected by main.py
-                            currentRoutePlan.push({
-                                sequence: sequenceCounter,
-                                lat: coords[0],
-                                lng: coords[1],
-                                customer_name: meta.customer_name || 'Depot',
-                                phone: meta.phone || 'N/A',
-                                order_id: meta.id || `ORD-${sequenceCounter}`
-                            });
+            // Maintain dense polyline for frontend interpolation logic
+            window.activeDeployments[vId] = routeCoords;
+            window.activeDeploymentsMins[vId] = parseFloat(durationMin);
 
-                            if (idx !== 0 && idx !== r.route.length - 1) {
-                                // Dynamic UI Popup for drivers showing the mapped customer metadata
-                                const popupHtml = `
-                                    <div style="text-align: center;">
-                                        <b style="color: #1f2937;">Drop-off: ${meta.customer_name || 'Unknown'}</b><br>
-                                        <span style="font-size: 11px; color: #4b5563;">📞 ${meta.phone || 'N/A'}</span><br>
-                                        <span style="font-size: 10px; font-weight: bold; color: #28a745;">Order ID: ${meta.id}</span>
-                                    </div>
-                                `;
+            const routeLine = L.polyline(routeCoords, { color: color, weight: routeWeight, opacity: 0.9, pane: 'routePane', dashArray: straightLinePreview ? '6, 8' : null }).addTo(window.routeLayerGroup);
+            
+            // --- NEW: Map waypoints to the backend RouteWaypoint structure while rendering popups ---
+            let currentRoutePlan = [];
+            let sequenceCounter = 1;
+            
+            r.route.forEach((node, idx) => {
+                const coords = locDict[node];
+                const meta = metaDict[node] || { id: `DEPOT-${sequenceCounter}`, customer_name: 'Command Center Depot', phone: 'N/A' };
 
-                                L.marker(coords, { 
-                                    icon: L.divIcon({ className: 'seq', html: `<div style="background: white; color: ${color}; border: 2.5px solid ${color}; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${sequenceCounter}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), 
-                                    pane: 'poiPane' 
-                                }).addTo(window.routeLayerGroup).bindPopup(popupHtml);
-                            }
-                            sequenceCounter++;
-                        }
+                if (coords) {
+                    // Construct the dictionary expected by main.py
+                    currentRoutePlan.push({
+                        sequence: sequenceCounter,
+                        lat: coords[0],
+                        lng: coords[1],
+                        customer_name: meta.customer_name || 'Depot',
+                        phone: meta.phone || 'N/A',
+                        order_id: meta.id || `ORD-${sequenceCounter}`
                     });
 
-                    // Store the strictly formatted structured dictionaries to push to the backend
-                    window.activeRoutePlans[vId] = currentRoutePlan;
-
-                    try {
-                        if (typeof L.polylineDecorator === 'function') {
-                            L.polylineDecorator(routeLine, { 
-                                patterns: [{ 
-                                    offset: 30, 
-                                    repeat: 70, 
-                                    symbol: L.Symbol.arrowHead({ 
-                                        pixelSize: 14, 
-                                        polygon: true, 
-                                        pathOptions: { color: '#ffffff', fillOpacity: 1, weight: 0, pane: 'routePane' } 
-                                    }) 
-                                }] 
-                            }).addTo(window.routeLayerGroup);
-                        }
-                    } catch(err) { console.warn("Polyline Decorator skipped."); }
-
-                    if (fleetList) {
-                        fleetList.innerHTML += `<div class="p-4 bg-gray-800 rounded-xl border-l-4 mb-3 shadow-xl" style="border-color: ${color}">
-                            <div class="flex justify-between items-start mb-2">
-                                <p class="text-[10px] font-black uppercase text-gray-500 tracking-tighter">${vId} Active</p>
-                                <span class="text-[10px] font-bold bg-gray-700 px-2 py-1 rounded text-blue-400">${durationMin} MIN</span>
+                    if (idx !== 0 && idx !== r.route.length - 1) {
+                        // Dynamic UI Popup for drivers showing the mapped customer metadata (escaped: free text)
+                        const popupHtml = `
+                            <div style="text-align: center;">
+                                <b style="color: #1f2937;">Drop-off: ${window.escapeHtml(meta.customer_name || 'Unknown')}</b><br>
+                                <span style="font-size: 11px; color: #4b5563;">📞 ${window.escapeHtml(meta.phone || 'N/A')}</span><br>
+                                <span style="font-size: 10px; font-weight: bold; color: #28a745;">Order ID: ${window.escapeHtml(meta.id)}</span>
                             </div>
-                            <p class="text-white font-mono text-sm mb-3">${distanceKm} KM | ${dropsCount} Drops</p>
-                            <button onclick="window.deployMission('${vId}', '${gmapsUrl}')" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
-                                Deploy Live Mission
-                            </button>
-                            <button id="recalc-btn-${vId}" onclick="window.triggerTrafficRecalculate('${vId}')" class="w-full mt-2 py-2 bg-gray-700 hover:bg-orange-600 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
-                                <i class="fa-solid fa-code-merge"></i> Recalculate Traffic
-                            </button>
-                        </div>`;
+                        `;
+
+                        L.marker(coords, { 
+                            icon: L.divIcon({ className: 'seq', html: `<div style="background: white; color: ${color}; border: 2.5px solid ${color}; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${sequenceCounter}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), 
+                            pane: 'poiPane' 
+                        }).addTo(window.routeLayerGroup).bindPopup(popupHtml);
                     }
-                } else { throw new Error("Both OSRM servers rejected the route geometry."); }
-            } catch (e) { 
-                console.error("Complete Network Failure. Deploying Direct Lines.", e);
+                    sequenceCounter++;
+                }
+            });
+
+            // Store the strictly formatted structured dictionaries to push to the backend
+            window.activeRoutePlans[vId] = currentRoutePlan;
+
+            try {
+                if (typeof L.polylineDecorator === 'function') {
+                    L.polylineDecorator(routeLine, { 
+                        patterns: [{ 
+                            offset: 30, 
+                            repeat: 70, 
+                            symbol: L.Symbol.arrowHead({ 
+                                pixelSize: 14, 
+                                polygon: true, 
+                                pathOptions: { color: '#ffffff', fillOpacity: 1, weight: 0, pane: 'routePane' } 
+                            }) 
+                        }] 
+                    }).addTo(window.routeLayerGroup);
+                }
+            } catch(err) { console.warn("Polyline Decorator skipped."); }
+
+            if (fleetList) {
+                const safeId = window.escapeHtml(vId);
+                const previewNote = straightLinePreview
+                    ? `<p class="text-[10px] text-orange-400 mb-2">Straight-line preview: road geometry unavailable</p>` : '';
+                fleetList.innerHTML += `<div class="p-4 bg-gray-800 rounded-xl border-l-4 mb-3 shadow-xl" style="border-color: ${color}">
+                    <div class="flex justify-between items-start mb-2">
+                        <p class="text-[10px] font-black uppercase text-gray-500 tracking-tighter">${safeId} Active</p>
+                        <span class="text-[10px] font-bold bg-gray-700 px-2 py-1 rounded text-blue-400">${durationMin} MIN</span>
+                    </div>
+                    <p class="text-white font-mono text-sm mb-3">${distanceKm} KM | ${dropsCount} Drops</p>
+                    ${previewNote}
+                    <button data-deploy-vehicle="${safeId}" onclick="window.deployMission('${safeId}', '${gmapsUrl}')" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
+                        Deploy Live Mission
+                    </button>
+                    <button id="recalc-btn-${safeId}" onclick="window.triggerTrafficRecalculate('${safeId}')" class="w-full mt-2 py-2 bg-gray-700 hover:bg-orange-600 text-white text-xs font-bold rounded shadow transition-colors flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-code-merge"></i> Recalculate Traffic
+                    </button>
+                </div>`;
             }
         }
         window.updateBIMetrics(true);
@@ -1475,11 +1823,13 @@ function bootCommandCenter() {
     window.map.on('overlayremove', function(e) {
         if (e.name.includes("Live Operations")) {
             if (window.liveFleetSocket) {
-                window.liveFleetSocket.close();
-                window.liveFleetSocket = null;
+                const closing = window.liveFleetSocket;
+                window.liveFleetSocket = null;      // detach first so onclose does not auto-reconnect
+                closing.close();
                 console.log("📡 Live Fleet Telemetry: Disconnected");
             }
             for (let id in window.liveMarkers) {
+                if (window.liveMarkers[id]._slideFrame) cancelAnimationFrame(window.liveMarkers[id]._slideFrame);
                 window.map.removeLayer(window.liveMarkers[id]);
             }
             window.liveMarkers = {};
@@ -1487,6 +1837,8 @@ function bootCommandCenter() {
     });
 
     window.initiateSubscriptionRenewal = function() {
+        // The server is the authority on what each payment buys (PAYSTACK_PLANS on the API, keyed by amount).
+        // These figures are only used for the prompt text and must match that configuration.
         const planChoice = prompt(
             "💳 SELECT YOUR PLAN:\n\n" +
             "1. Daily Pass (20 Stops) - ₦3,000\n" +
@@ -1511,36 +1863,36 @@ function bootCommandCenter() {
         const userEmail = prompt("Please enter your business email for the receipt:");
         if (!userEmail) return;
 
+        const licenseKey = localStorage.getItem('uyo_license_key');
         const handler = PaystackPop.setup({
             key: 'pk_live_e0c2402108448771f33bbe09670508ede2ad6a92',
             email: userEmail,
             amount: amountKobo,
             currency: "NGN",
             ref: 'UYO-' + Math.floor((Math.random() * 1000000000) + 1),
+            // The licence key travels with the payment so the signed Paystack webhook can apply it even if this tab closes.
+            metadata: { license_key: licenseKey },
             callback: function(response) {
+                // Only the reference and key are sent: the API verifies the payment with Paystack and applies the plan itself.
                 fetch(`${window.API_BASE_URL}/api/vrp/activate-license`, {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'x-license-key': localStorage.getItem('uyo_license_key')
-                    },
+                    headers: window.authHeaders(),
                     body: JSON.stringify({ 
                         reference: response.reference, 
-                        license_key: localStorage.getItem('uyo_license_key'),
-                        days_to_add: daysToAdd,
-                        stop_limit: stopLimit
+                        license_key: licenseKey
                     })
                 })
-                .then(res => {
+                .then(async res => {
                     if (res.ok) {
                         alert(`✅ Plan Activated! Access extended by ${daysToAdd} day(s) with a ${stopLimit}-stop limit.`);
                         location.reload(); 
                     } else {
-                        alert("⚠️ Payment confirmed but license activation failed. Please contact support.");
+                        const body = await res.json().catch(() => ({}));
+                        alert(`⚠️ Payment received, but activation failed: ${window.formatApiError(body, res.statusText)}\n\nKeep this payment reference and contact support: ${response.reference}`);
                     }
                 })
                 .catch(err => {
-                    alert("⚠️ Network error during activation verification.");
+                    alert(`⚠️ Network error during activation verification. Keep this payment reference: ${response.reference}`);
                 });
             },
             onClose: function() {
