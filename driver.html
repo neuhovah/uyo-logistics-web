@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Uyo Logistics | Driver Mission</title>
-    
+
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI1MCIgZmlsbD0iIzNiODJmNiIvPjx0ZXh0IHg9IjUwIiB5PSI3MiIgZm9udC1zaXplPSI2NSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCI+VTwvdGV4dD48L3N2Zz4=">
 
+    <!-- Tailwind Play CDN is fine for now; for production build the CSS and self-host it. -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { background-color: #0f172a; color: white; font-family: 'Inter', sans-serif; }
         .status-pulse { animation: pulse 2s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
-        /* Prevent text selection and zooming on mobile */
-        * { user-select: none; touch-action: manipulation; }
+        button { touch-action: manipulation; }
     </style>
 </head>
 <body class="flex flex-col min-h-screen p-6">
@@ -24,23 +24,25 @@
             <h1 class="text-2xl font-black tracking-tighter text-blue-500">UYO LOGISTICS</h1>
             <p class="text-xs text-gray-400 uppercase tracking-widest">Driver Mission Interface</p>
         </div>
-        <div id="connection-status" class="w-3 h-3 bg-red-500 rounded-full status-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]"></div>
+        <div id="connection-status" class="w-3 h-3 rounded-full status-pulse" style="background-color:#ef4444;box-shadow:0 0 10px #ef4444"></div>
     </div>
 
-    <div id="offline-warning" class="hidden bg-orange-600 text-white text-xs font-bold text-center py-2 px-4 rounded-xl mb-4 shadow-lg animate-pulse">
-        <i class="fa-solid fa-triangle-exclamation mr-2"></i> Cellular Connection Lost. Reconnecting...
+    <div id="offline-warning" class="hidden bg-orange-600 text-white text-xs font-bold text-center py-2 px-4 rounded-xl mb-4 shadow-lg">
+        <i class="fa-solid fa-triangle-exclamation mr-2"></i> No network. Fixes are being kept and will be sent when you are back online.
     </div>
+
+    <div id="link-warning" class="hidden bg-red-700 text-white text-xs font-bold text-center py-2 px-4 rounded-xl mb-4 shadow-lg"></div>
 
     <!-- Navigation & Telemetry Card -->
     <div class="bg-gray-800 rounded-3xl p-6 shadow-2xl border border-gray-700 mb-6 relative overflow-hidden">
         <div class="flex justify-between items-start mb-4 relative z-10">
             <h2 id="vehicle-id" class="text-xl font-bold text-gray-100">---</h2>
-            <span class="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-1 rounded font-bold border border-blue-500/30">ACTIVE MISSION</span>
+            <span id="mode-badge" class="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-1 rounded font-bold border border-blue-500/30">ACTIVE MISSION</span>
         </div>
-        
+
         <div class="space-y-4 mb-6 relative z-10">
             <div class="flex items-center gap-4">
-                <i class="fa-solid fa-location-crosshairs text-gray-500" id="gps-icon"></i>
+                <i class="fa-solid fa-location-crosshairs" id="gps-icon" style="color:#6b7280"></i>
                 <div>
                     <p class="text-[10px] text-gray-500 uppercase font-bold">Telemetry Status</p>
                     <p id="telemetry-log" class="text-sm font-mono text-gray-300">Waiting for GPS lock...</p>
@@ -48,216 +50,511 @@
             </div>
         </div>
 
-        <button onclick="startNavigation()" id="nav-btn" class="w-full py-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-2xl shadow-[0_4px_20px_rgba(37,99,235,0.4)] transition-all flex items-center justify-center gap-3 relative z-10">
+        <button id="nav-btn" class="w-full py-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-2xl shadow-[0_4px_20px_rgba(37,99,235,0.4)] transition-all flex items-center justify-center gap-3 relative z-10">
             <i class="fa-solid fa-map-location-dot"></i>
-            <span>START NAVIGATION</span>
+            <span id="nav-btn-label">START NAVIGATION</span>
         </button>
+        <button id="complete-btn" class="hidden w-full mt-3 py-3 bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold rounded-2xl relative z-10">
+            <i class="fa-solid fa-flag-checkered mr-2"></i> COMPLETE MISSION
+        </button>
+        <p class="text-[10px] text-gray-500 mt-3 relative z-10">
+            Pressing start shares this device's location with your dispatcher until the mission is completed.
+        </p>
     </div>
 
-    <!-- NEW: Delivery Manifest Card -->
+    <!-- Delivery Manifest Card -->
     <div id="manifest-container" class="bg-gray-800 rounded-3xl p-5 shadow-2xl border border-gray-700 mb-6 hidden">
         <h3 class="text-xs font-bold text-gray-400 mb-4 uppercase tracking-widest border-b border-gray-700 pb-2">
             <i class="fa-solid fa-clipboard-list mr-2"></i> Route Manifest
         </h3>
-        <div id="manifest-list" class="space-y-3">
-            <!-- Dynamic Stops Injection -->
-        </div>
+        <div id="manifest-list" class="space-y-3"></div>
     </div>
+
+    <!-- Diagnostics & log export (used for field tests) -->
+    <details class="bg-gray-800/60 border border-gray-700 rounded-2xl p-4 mb-6">
+        <summary class="text-xs font-bold text-gray-400 uppercase tracking-widest cursor-pointer">Diagnostics</summary>
+        <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono text-gray-300">
+            <span>Fixes recorded</span><span id="d-fixes">0</span>
+            <span>Sent OK</span><span id="d-acked">0</span>
+            <span>Waiting to send</span><span id="d-queued">0</span>
+            <span>Failed attempts</span><span id="d-failed">0</span>
+            <span>Dropped (queue full)</span><span id="d-dropped">0</span>
+            <span>Rejected by server</span><span id="d-rejected">0</span>
+            <span>Last accuracy</span><span id="d-acc">-</span>
+            <span>Last round trip</span><span id="d-rtt">-</span>
+            <span>Page visible</span><span id="d-vis">yes</span>
+            <span>Log entries stored</span><span id="d-entries">0</span>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+            <button id="exp-json" class="text-[11px] bg-gray-700 px-3 py-2 rounded-lg font-bold">Export JSON</button>
+            <button id="exp-csv" class="text-[11px] bg-gray-700 px-3 py-2 rounded-lg font-bold">Export CSV</button>
+            <button id="clr-log" class="text-[11px] bg-red-900/60 px-3 py-2 rounded-lg font-bold">Clear log</button>
+        </div>
+    </details>
 
     <div class="mt-auto bg-blue-900/20 border border-blue-800/50 p-4 rounded-2xl mb-4">
         <p class="text-[11px] text-blue-300 leading-relaxed font-medium">
             <i class="fa-solid fa-shield-halved mr-1"></i>
-            Keep this device plugged into power. <br><br>
+            Keep this device plugged into power and the screen on. <br><br>
             <i class="fa-solid fa-circle-info mr-1"></i>
-            Do not close this tab. The Command Center requires this page to remain open to track your vehicle accurately.
+            Keep this page open and visible. Phones pause location tracking when another app or tab is in front.
+            <span id="research-hint" class="hidden"><br><br><b>Research mode:</b> navigation is not opened, so this page stays in front.</span>
         </p>
     </div>
 
     <script>
-        // --- SECURE ENTERPRISE DOMAIN UPGRADE ---
-        // 🚨 CRITICAL FIX: Swapped to Production Domains (Vercel Reverse Proxy enabled)
+    (() => {
+        'use strict';
+
+        // ------------------------------------------------------------------
+        // CONFIGURATION
+        // ------------------------------------------------------------------
         const API_BASE_URL = "https://uyo-routing-engine.onrender.com";
-        
-        const urlParams = new URLSearchParams(window.location.search);
-        const vehicleId = urlParams.get('v') || "UNKNOWN-VEH";
-        const gmapsUrl = urlParams.get('map') || "#";
+        const GEO_OPTIONS = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 };
+        const REQUEST_TIMEOUT_MS = 8000;
+        const MIN_ENQUEUE_MS = 900;       // live relay at most about once a second
+        const MAX_QUEUE = 200;            // oldest unsent fixes are dropped beyond this
+        const MAX_LOG_ENTRIES = 8000;     // keeps localStorage use around 2 MB
+        const ACCURACY_WARN_M = 30;
+        const STORE_KEY = 'uyo_driver_log_v2';
+        const APP_VERSION = 'driver-2.0';
 
-        document.getElementById('vehicle-id').innerText = vehicleId;
+        const params = new URLSearchParams(window.location.search);
+        const vehicleId = (params.get('v') || '').trim();
+        const driverToken = (params.get('t') || '').trim();
+        const researchMode = params.get('research') === '1';
+        const sessionId = (window.crypto && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : String(Date.now()) + Math.random().toString(16).slice(2);
 
-        // 🚨 FETCH MANIFEST DATA DIRECTLY FROM DB
-        async function fetchMissionManifest() {
+        const $ = (id) => document.getElementById(id);
+        const el = (tag, cls, text) => {
+            const n = document.createElement(tag);
+            if (cls) n.className = cls;
+            if (text !== undefined) n.textContent = text;
+            return n;
+        };
+
+        // ------------------------------------------------------------------
+        // STATE
+        // ------------------------------------------------------------------
+        let tracking = false, watchId = null, wakeLock = null;
+        let seq = 0, queue = [], sending = false, backoff = 0, fatal = false;
+        let lastEnqueue = 0, lastFix = null, lastRtt = null;
+        let gps = 'wait';     // wait | ok | weak | err
+        let netOk = true;
+        const stats = { fixes: 0, acked: 0, failures: 0, dropped: 0, rejected: 0 };
+
+        // ------------------------------------------------------------------
+        // LOCAL LOG (survives reloads; exported for field-test analysis)
+        // ------------------------------------------------------------------
+        let entries = (() => {
+            try { const a = JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+            catch (e) { return []; }
+        })();
+        let saveTimer = null;
+        function saveNow() {
             try {
-                const response = await fetch(`${API_BASE_URL}/api/vrp/active-missions`);
-                if (!response.ok) return;
-                
-                const data = await response.json();
-                
-                if (data.active_missions && data.active_missions[vehicleId]) {
-                    const coordsArray = data.active_missions[vehicleId].coords;
-                    
-                    if (coordsArray && coordsArray.length > 0) {
-                        const manifestList = document.getElementById('manifest-list');
-                        manifestList.innerHTML = '';
-                        
-                        coordsArray.forEach(stop => {
-                            // Verify this is a rich dictionary, not a legacy raw array
-                            if (stop.customer_name && stop.sequence) {
-                                const isDepot = stop.order_id === 'DEPOT';
-                                const bgClass = isDepot ? 'bg-blue-900/30 border-blue-800/50' : 'bg-gray-700/50 border-gray-600';
-                                const numColor = isDepot ? 'text-blue-400' : 'text-green-400';
-                                
-                                const phoneHtml = (stop.phone && stop.phone !== 'N/A')
-                                    ? `<a href="tel:${stop.phone}" class="mt-2 inline-flex items-center gap-2 text-[11px] bg-green-600/90 active:bg-green-500 text-white px-4 py-1.5 rounded-full font-bold shadow-md border border-green-500">
-                                            <i class="fa-solid fa-phone"></i> Call Customer
-                                       </a>`
-                                    : `<span class="text-[10px] text-gray-500 mt-2 block italic">No Phone Number Provided</span>`;
-
-                                manifestList.innerHTML += `
-                                    <div class="p-3 ${bgClass} border rounded-xl relative pl-8">
-                                        <div class="absolute top-3 -left-3 w-7 h-7 bg-gray-900 ${numColor} font-black text-[11px] flex items-center justify-center rounded-full border-2 border-gray-700 shadow-lg z-10">
-                                            ${stop.sequence}
-                                        </div>
-                                        <div class="ml-2">
-                                            <p class="text-[13px] font-bold text-gray-100">${stop.customer_name}</p>
-                                            <p class="text-[10px] font-mono text-gray-400 mt-0.5">ID: ${stop.order_id}</p>
-                                            ${!isDepot ? phoneHtml : ''}
-                                        </div>
-                                    </div>
-                                `;
-                            }
-                        });
-                        
-                        if (manifestList.innerHTML !== '') {
-                            document.getElementById('manifest-container').classList.remove('hidden');
-                        }
-                    }
-                }
-            } catch (err) {
-                console.warn("Could not retrieve delivery manifest:", err);
-            }
+                if (entries.length > MAX_LOG_ENTRIES) entries = entries.slice(-MAX_LOG_ENTRIES);
+                localStorage.setItem(STORE_KEY, JSON.stringify(entries));
+            } catch (e) { /* storage full or blocked: the in-memory log still works */ }
         }
-        
-        // Execute fetch on load
-        fetchMissionManifest();
+        function scheduleSave() {
+            if (saveTimer) return;
+            saveTimer = setTimeout(() => { saveTimer = null; saveNow(); }, 5000);
+        }
+        function logEntry(e) { entries.push(e); scheduleSave(); return e; }
 
-        // 🚨 CRITICAL FIX 1: WakeLock API (Prevent Screen Sleep)
-        let wakeLock = null;
+        // ------------------------------------------------------------------
+        // UI
+        // ------------------------------------------------------------------
+        function renderStatus() {
+            let color = '#ef4444';
+            if (gps === 'ok' && netOk) color = '#22c55e';
+            else if (gps === 'weak' || (gps === 'ok' && !netOk)) color = '#f97316';
+            const dot = $('connection-status');
+            dot.style.backgroundColor = color;
+            dot.style.boxShadow = '0 0 10px ' + color;
+            $('gps-icon').style.color = (gps === 'ok' || gps === 'weak') ? '#60a5fa' : (gps === 'err' ? '#ef4444' : '#6b7280');
+        }
+        function setLog(text, level) {
+            const p = $('telemetry-log');
+            p.textContent = text;
+            p.style.color = { ok: '#4ade80', warn: '#fb923c', err: '#f87171' }[level] || '#d1d5db';
+        }
+        function renderDiagnostics() {
+            $('d-fixes').textContent = stats.fixes;
+            $('d-acked').textContent = stats.acked;
+            $('d-queued').textContent = queue.length;
+            $('d-failed').textContent = stats.failures;
+            $('d-dropped').textContent = stats.dropped;
+            $('d-rejected').textContent = stats.rejected;
+            $('d-acc').textContent = lastFix && lastFix.accuracy != null ? Math.round(lastFix.accuracy) + ' m' : '-';
+            $('d-rtt').textContent = lastRtt != null ? lastRtt + ' ms' : '-';
+            $('d-vis').textContent = document.visibilityState === 'visible' ? 'yes' : 'no';
+            $('d-entries').textContent = entries.length;
+        }
+        function showLinkWarning(msg) {
+            const w = $('link-warning');
+            w.textContent = msg;
+            w.classList.remove('hidden');
+        }
+
+        // ------------------------------------------------------------------
+        // SAFE NAVIGATION LINK (prevents javascript: and look-alike hosts)
+        // ------------------------------------------------------------------
+        function safeMapsUrl(raw) {
+            if (!raw) return null;
+            const candidates = [raw];
+            try { candidates.push(decodeURIComponent(raw)); } catch (e) { /* ignore */ }
+            const hosts = ['www.google.com', 'google.com', 'maps.google.com', 'maps.app.goo.gl', 'goo.gl'];
+            for (const c of candidates) {
+                try {
+                    const u = new URL(c);
+                    if (u.protocol !== 'https:' || !hosts.includes(u.hostname)) continue;
+                    if ((u.hostname === 'www.google.com' || u.hostname === 'google.com') && !u.pathname.startsWith('/maps')) continue;
+                    return u.toString();
+                } catch (e) { /* try the next candidate */ }
+            }
+            return null;
+        }
+
+        // ------------------------------------------------------------------
+        // WAKE LOCK
+        // ------------------------------------------------------------------
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    console.log('✅ Screen Wake Lock activated');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
                 }
-            } catch (err) {
-                console.warn(`Wake Lock error: ${err.name}, ${err.message}`);
-            }
+            } catch (err) { console.warn('Wake Lock:', err && err.name); }
         }
 
-        // Re-acquire WakeLock if the driver minimizes and maximizes the browser
-        document.addEventListener('visibilitychange', () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') {
-                requestWakeLock();
+        // ------------------------------------------------------------------
+        // SENDER: one request in flight, ordered, retried with backoff
+        // ------------------------------------------------------------------
+        function toPayload(e) {
+            return {
+                vehicle_id: vehicleId,
+                lat: e.lat, lon: e.lon,
+                accuracy: e.accuracy,
+                speed: e.speed,           // null stays null (unknown), never coerced to 0
+                heading: e.heading,
+                seq: e.seq,
+                session_id: sessionId,
+                device_ts: e.device_ts,
+                sent_ts: Date.now(),
+                event: e.event || null,
+                event_ts: e.event_ts || null,
+                stop_seq: e.stop_seq != null ? e.stop_seq : null,
+                status: e.mission_status || null
+            };
+        }
+
+        function enqueue(e) {
+            queue.push(e);
+            while (queue.length > MAX_QUEUE) {
+                const d = queue.shift();
+                d.status = 'dropped';
+                stats.dropped++;
             }
-        });
+            pump();
+        }
 
-        // 🚨 CRITICAL FIX 2: Connection Listeners
-        window.addEventListener('offline', () => {
-            document.getElementById('offline-warning').classList.remove('hidden');
-            document.getElementById('connection-status').classList.replace('bg-green-500', 'bg-orange-500');
-            document.getElementById('connection-status').style.boxShadow = '0 0 10px rgba(249,115,22,0.8)';
-        });
+        async function pump() {
+            if (sending || !queue.length || fatal) return;
+            sending = true;
+            const e = queue[0];
+            e.attempts = (e.attempts || 0) + 1;
+            const payload = toPayload(e);
+            e.sent_ts = payload.sent_ts;
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+            const t0 = performance.now();
+            let retryIn = 0;
+            try {
+                const res = await fetch(API_BASE_URL + '/api/telemetry/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Driver-Token': driverToken },
+                    body: JSON.stringify(payload),
+                    signal: ctrl.signal
+                });
+                clearTimeout(timer);
+                if (res.ok) {
+                    let body = {};
+                    try { body = await res.json(); } catch (x) { /* ignore */ }
+                    e.ack_ts = Date.now();
+                    e.rtt_ms = Math.round(performance.now() - t0);
+                    e.server_ts = body.server_ts != null ? body.server_ts : null;
+                    e.status = 'acked';
+                    queue.shift();
+                    stats.acked++;
+                    backoff = 0;
+                    netOk = true;
+                    lastRtt = e.rtt_ms;
+                    if (e.type === 'fix') {
+                        const acc = e.accuracy != null ? ' ±' + Math.round(e.accuracy) + ' m' : '';
+                        setLog('Sync OK • [' + e.lat.toFixed(5) + ', ' + e.lon.toFixed(5) + ']' + acc,
+                               (e.accuracy != null && e.accuracy > ACCURACY_WARN_M) ? 'warn' : 'ok');
+                    }
+                } else if (res.status === 401 || res.status === 403) {
+                    e.status = 'rejected'; e.http_status = res.status;
+                    queue.shift(); stats.rejected++; fatal = true;
+                    setLog('Link not accepted (' + res.status + '). Ask dispatch for a new link.', 'err');
+                    showLinkWarning('This link is not valid for live tracking. Ask your dispatcher for a new one.');
+                } else if (res.status === 410) {
+                    e.status = 'rejected'; e.http_status = 410;
+                    queue.shift(); stats.rejected++; fatal = true;
+                    setLog('Mission is no longer active.', 'warn');
+                    stopTracking();
+                } else if (res.status === 422) {
+                    e.status = 'rejected'; e.http_status = 422;
+                    queue.shift(); stats.rejected++;
+                    setLog('Server rejected a position (outside area or invalid).', 'warn');
+                } else {
+                    throw new Error('HTTP ' + res.status);
+                }
+            } catch (err) {
+                clearTimeout(timer);
+                netOk = false;
+                e.status = 'retry';
+                stats.failures++;
+                backoff = Math.min(15000, backoff ? backoff * 2 : 1000);
+                retryIn = backoff;
+                const aborted = err && err.name === 'AbortError';
+                setLog((aborted ? 'Slow network' : 'Network unstable') + ' • retrying in ' + Math.round(retryIn / 1000) + ' s (' + queue.length + ' waiting)', 'warn');
+            } finally {
+                sending = false;
+                renderStatus(); renderDiagnostics(); scheduleSave();
+            }
+            if (retryIn) setTimeout(pump, retryIn);
+            else if (queue.length) pump();
+        }
 
-        window.addEventListener('online', () => {
-            document.getElementById('offline-warning').classList.add('hidden');
-            document.getElementById('connection-status').classList.replace('bg-orange-500', 'bg-green-500');
-            document.getElementById('connection-status').style.boxShadow = '0 0 10px rgba(34,197,94,0.8)';
-        });
+        // ------------------------------------------------------------------
+        // GEOLOCATION
+        // ------------------------------------------------------------------
+        function onPosition(position) {
+            const c = position.coords;
+            const now = Date.now();
+            const e = logEntry({
+                type: 'fix', session_id: sessionId, seq: seq++,
+                lat: c.latitude, lon: c.longitude, accuracy: c.accuracy,
+                speed: Number.isFinite(c.speed) ? c.speed : null,
+                heading: Number.isFinite(c.heading) ? c.heading : null,
+                device_ts: position.timestamp, recv_ts: now, status: 'pending'
+            });
+            lastFix = e;
+            stats.fixes++;
+            gps = (c.accuracy > ACCURACY_WARN_M) ? 'weak' : 'ok';
+            if (now - lastEnqueue >= MIN_ENQUEUE_MS) { lastEnqueue = now; enqueue(e); }
+            else { e.status = 'skipped'; }
+            renderStatus(); renderDiagnostics();
+        }
 
-        function startNavigation() {
-            requestWakeLock(); 
-            const navBtn = document.getElementById('nav-btn');
-            navBtn.innerHTML = `<i class="fa-solid fa-route fa-beat"></i> <span>NAVIGATION ACTIVE</span>`;
-            navBtn.classList.replace('bg-blue-600', 'bg-green-600');
-            navBtn.classList.replace('hover:bg-blue-500', 'hover:bg-green-500');
-            navBtn.style.boxShadow = '0 4px 20px rgba(34,197,94,0.4)';
-            
-            // Open Google Maps
-            window.open(decodeURIComponent(gmapsUrl), '_blank');
-            startTracking();
+        function onGeoError(error) {
+            gps = 'err';
+            switch (error.code) {
+                case error.PERMISSION_DENIED: setLog('GPS permission denied. Please allow location.', 'err'); break;
+                case error.POSITION_UNAVAILABLE: setLog('GPS signal lost. Move to open sky.', 'warn'); break;
+                case error.TIMEOUT: setLog('GPS timeout. Locating satellites...', 'warn'); break;
+                default: setLog('GPS error.', 'err');
+            }
+            logEntry({ type: 'geo_error', session_id: sessionId, code: error.code, ts: Date.now() });
+            renderStatus();
         }
 
         function startTracking() {
-            if ("geolocation" in navigator) {
-                
-                const geoOptions = {
-                    enableHighAccuracy: true,
-                    maximumAge: 5000, 
-                    timeout: 10000 
-                };
-
-                navigator.geolocation.watchPosition(async (position) => {
-                    const statusDot = document.getElementById('connection-status');
-                    const gpsIcon = document.getElementById('gps-icon');
-                    
-                    statusDot.classList.replace('bg-red-500', 'bg-green-500');
-                    statusDot.style.boxShadow = '0 0 10px rgba(34,197,94,0.8)';
-                    gpsIcon.classList.replace('text-gray-500', 'text-blue-400');
-
-                    const payload = {
-                        vehicle_id: vehicleId,
-                        lat: position.coords.latitude,
-                        lon: position.coords.longitude,
-                        accuracy: position.coords.accuracy,
-                        speed: position.coords.speed || 0 
-                    };
-
-                    // 🚨 CRITICAL FIX 3: Tactical Timeout for Cellular Drops
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second mobile limit
-
-                    try {
-                        const response = await fetch(`${API_BASE_URL}/api/telemetry/update`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload),
-                            signal: controller.signal
-                        });
-                        
-                        clearTimeout(timeoutId);
-                        
-                        if (response.ok) {
-                            document.getElementById('telemetry-log').innerHTML = `<span class="text-green-400">Sync OK</span> • [${payload.lat.toFixed(5)}, ${payload.lon.toFixed(5)}]`;
-                        }
-                    } catch (err) {
-                        clearTimeout(timeoutId);
-                        if (err.name === 'AbortError') {
-                            document.getElementById('telemetry-log').innerHTML = `<span class="text-orange-400">Cellular Delay</span> • Retrying...`;
-                        } else {
-                            document.getElementById('telemetry-log').innerHTML = `<span class="text-red-400">Sync Error</span> • Network unstable`;
-                        }
-                    }
-                }, (error) => {
-                    // Graceful Error Trapping
-                    const log = document.getElementById('telemetry-log');
-                    const icon = document.getElementById('gps-icon');
-                    icon.classList.replace('text-blue-400', 'text-red-500');
-                    
-                    switch(error.code) {
-                        case error.PERMISSION_DENIED:
-                            log.innerHTML = `<span class="text-red-500 font-bold">GPS Permission Denied.</span> Please allow location.`;
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            log.innerHTML = `<span class="text-orange-400">GPS Signal Lost.</span> Move to open sky.`;
-                            break;
-                        case error.TIMEOUT:
-                            log.innerHTML = `<span class="text-orange-400">GPS Timeout.</span> Locating satellites...`;
-                            break;
-                    }
-                }, geoOptions);
-            } else {
-                document.getElementById('telemetry-log').innerHTML = `<span class="text-red-500">Device not supported.</span>`;
-            }
+            if (watchId !== null) return;   // never create a second watcher (it duplicates every fix)
+            if (!('geolocation' in navigator)) { setLog('Device not supported.', 'err'); return; }
+            watchId = navigator.geolocation.watchPosition(onPosition, onGeoError, GEO_OPTIONS);
         }
+
+        function stopTracking() {
+            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+            tracking = false;
+            if (wakeLock) { try { wakeLock.release(); } catch (e) { /* ignore */ } wakeLock = null; }
+            $('nav-btn-label').textContent = 'TRACKING STOPPED';
+            $('nav-btn').disabled = true;
+        }
+
+        function startNavigation() {
+            if (tracking || fatal) return;
+            if (!vehicleId) { showLinkWarning('This link has no vehicle id.'); return; }
+            tracking = true;
+            requestWakeLock();
+            const btn = $('nav-btn');
+            btn.classList.replace('bg-blue-600', 'bg-green-600');
+            btn.classList.replace('hover:bg-blue-500', 'hover:bg-green-500');
+            $('nav-btn-label').textContent = 'NAVIGATION ACTIVE';
+            $('complete-btn').classList.remove('hidden');
+            logEntry({ type: 'session_start', session_id: sessionId, vehicle_id: vehicleId, ts: Date.now(),
+                       research: researchMode, user_agent: navigator.userAgent, app: APP_VERSION });
+            if (!researchMode) {
+                const url = safeMapsUrl(params.get('map'));
+                if (url) window.open(url, '_blank', 'noopener');
+                else setLog('No valid navigation link. Tracking only.', 'warn');
+            }
+            startTracking();
+        }
+
+        // ------------------------------------------------------------------
+        // STOP MARKERS & COMPLETION
+        // ------------------------------------------------------------------
+        function fixFields(f) {
+            return { lat: f.lat, lon: f.lon, accuracy: f.accuracy, speed: f.speed, heading: f.heading, device_ts: f.device_ts };
+        }
+        function markEvent(kind, stopSeq) {
+            if (!lastFix) { setLog('Wait for a GPS fix before marking a stop.', 'warn'); return; }
+            const e = logEntry(Object.assign({
+                type: 'event', session_id: sessionId, seq: seq++, event: kind,
+                stop_seq: stopSeq, event_ts: Date.now(), recv_ts: Date.now(), status: 'pending'
+            }, fixFields(lastFix)));
+            enqueue(e);
+            setLog('Marked ' + kind + ' at stop ' + stopSeq, 'ok');
+        }
+        function completeMission() {
+            if (!lastFix) { setLog('Wait for a GPS fix first.', 'warn'); return; }
+            if (!window.confirm('Mark this mission as completed?')) return;
+            const e = logEntry(Object.assign({
+                type: 'event', session_id: sessionId, seq: seq++, event: null,
+                mission_status: 'completed', event_ts: Date.now(), recv_ts: Date.now(), status: 'pending'
+            }, fixFields(lastFix)));
+            enqueue(e);
+            stopTracking();
+            setLog('Mission completed. Sending final update.', 'ok');
+        }
+
+        // ------------------------------------------------------------------
+        // MANIFEST (built with textContent only: customer data is never parsed as HTML)
+        // ------------------------------------------------------------------
+        const PHONE_OK = /^[+0-9][0-9\s()-]{4,19}$/;
+        function renderManifest(stops) {
+            const list = $('manifest-list');
+            list.replaceChildren();
+            let shown = 0;
+            stops.forEach((stop) => {
+                if (!stop || typeof stop !== 'object' || stop.customer_name === undefined || stop.sequence === undefined) return;
+                const isDepot = stop.order_id === 'DEPOT';
+                const card = el('div', 'p-3 border rounded-xl relative pl-8 ' +
+                    (isDepot ? 'bg-blue-900/30 border-blue-800/50' : 'bg-gray-700/50 border-gray-600'));
+                const badge = el('div', 'absolute top-3 -left-3 w-7 h-7 bg-gray-900 font-black text-[11px] flex items-center justify-center rounded-full border-2 border-gray-700 shadow-lg z-10', String(stop.sequence));
+                badge.style.color = isDepot ? '#60a5fa' : '#4ade80';
+                const body = el('div', 'ml-2');
+                body.appendChild(el('p', 'text-[13px] font-bold text-gray-100', String(stop.customer_name)));
+                body.appendChild(el('p', 'text-[10px] font-mono text-gray-400 mt-0.5', 'ID: ' + String(stop.order_id)));
+                if (!isDepot) {
+                    const row = el('div', 'mt-2 flex flex-wrap gap-2');
+                    const phone = stop.phone != null ? String(stop.phone) : '';
+                    if (phone && phone !== 'N/A' && PHONE_OK.test(phone)) {
+                        const a = el('a', 'inline-flex items-center gap-2 text-[11px] bg-green-600/90 text-white px-4 py-1.5 rounded-full font-bold border border-green-500', 'Call Customer');
+                        a.href = 'tel:' + phone.replace(/[^0-9+]/g, '');
+                        row.appendChild(a);
+                    } else {
+                        row.appendChild(el('span', 'text-[10px] text-gray-500 italic', 'No phone number'));
+                    }
+                    const arr = el('button', 'text-[11px] bg-gray-600 text-white px-3 py-1.5 rounded-full font-bold', 'Arrived');
+                    arr.addEventListener('click', () => markEvent('arrived', Number(stop.sequence)));
+                    const dep = el('button', 'text-[11px] bg-gray-600 text-white px-3 py-1.5 rounded-full font-bold', 'Departed');
+                    dep.addEventListener('click', () => markEvent('departed', Number(stop.sequence)));
+                    row.appendChild(arr); row.appendChild(dep);
+                    body.appendChild(row);
+                }
+                card.appendChild(badge); card.appendChild(body);
+                list.appendChild(card);
+                shown++;
+            });
+            if (shown) $('manifest-container').classList.remove('hidden');
+        }
+
+        async function fetchMissionManifest() {
+            if (!vehicleId) return;
+            try {
+                const res = await fetch(API_BASE_URL + '/api/vrp/driver-mission?v=' + encodeURIComponent(vehicleId), {
+                    headers: { 'X-Driver-Token': driverToken }
+                });
+                if (res.status === 401 || res.status === 403) { showLinkWarning('This link is not valid. Ask your dispatcher for a new one.'); return; }
+                if (res.status === 410) { showLinkWarning('This mission is no longer active.'); return; }
+                if (!res.ok) return;
+                const data = await res.json();
+                renderManifest(Array.isArray(data.coords) ? data.coords : []);
+            } catch (err) { console.warn('Could not retrieve delivery manifest:', err); }
+        }
+
+        // ------------------------------------------------------------------
+        // EXPORT
+        // ------------------------------------------------------------------
+        function download(name, text, mime) {
+            const blob = new Blob([text], { type: mime });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        }
+        function stamp() { return new Date().toISOString().replace(/[:.]/g, '-'); }
+        function exportJson() {
+            saveNow();
+            const doc = { meta: { app: APP_VERSION, vehicle_id: vehicleId, session_id: sessionId, api: API_BASE_URL,
+                                  user_agent: navigator.userAgent, exported_at: new Date().toISOString() },
+                          entries: entries };
+            download('uyo_driver_log_' + (vehicleId || 'unknown') + '_' + stamp() + '.json', JSON.stringify(doc), 'application/json');
+        }
+        function exportCsv() {
+            const cols = ['type', 'session_id', 'seq', 'event', 'stop_seq', 'lat', 'lon', 'accuracy', 'speed', 'heading',
+                          'device_ts', 'recv_ts', 'event_ts', 'sent_ts', 'ack_ts', 'server_ts', 'rtt_ms', 'attempts', 'status', 'ts', 'state', 'code'];
+            const q = (v) => { if (v === undefined || v === null) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+            const lines = [cols.join(',')].concat(entries.map((e) => cols.map((c) => q(e[c])).join(',')));
+            download('uyo_driver_log_' + (vehicleId || 'unknown') + '_' + stamp() + '.csv', lines.join('\n'), 'text/csv');
+        }
+        function clearLog() {
+            if (!window.confirm('Delete the stored log on this device? Export it first.')) return;
+            entries = [];
+            try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
+            renderDiagnostics();
+        }
+
+        // ------------------------------------------------------------------
+        // EVENTS & INIT
+        // ------------------------------------------------------------------
+        document.addEventListener('visibilitychange', () => {
+            logEntry({ type: 'visibility', session_id: sessionId, state: document.visibilityState, ts: Date.now() });
+            if (document.visibilityState === 'visible' && tracking) requestWakeLock();
+            renderDiagnostics();
+        });
+        window.addEventListener('offline', () => {
+            netOk = false; $('offline-warning').classList.remove('hidden');
+            logEntry({ type: 'network', session_id: sessionId, state: 'offline', ts: Date.now() });
+            renderStatus();
+        });
+        window.addEventListener('online', () => {
+            $('offline-warning').classList.add('hidden');
+            logEntry({ type: 'network', session_id: sessionId, state: 'online', ts: Date.now() });
+            backoff = 0; pump();
+        });
+        window.addEventListener('pagehide', saveNow);
+        window.addEventListener('beforeunload', saveNow);
+
+        $('nav-btn').addEventListener('click', startNavigation);
+        $('complete-btn').addEventListener('click', completeMission);
+        $('exp-json').addEventListener('click', exportJson);
+        $('exp-csv').addEventListener('click', exportCsv);
+        $('clr-log').addEventListener('click', clearLog);
+
+        $('vehicle-id').textContent = vehicleId || '---';
+        if (researchMode) {
+            $('mode-badge').textContent = 'RESEARCH MODE';
+            $('research-hint').classList.remove('hidden');
+        }
+        if (!vehicleId) showLinkWarning('This link has no vehicle id.');
+        else if (!driverToken) showLinkWarning('This link has no driver token. Live tracking may be refused.');
+
+        renderStatus(); renderDiagnostics();
+        fetchMissionManifest();
+    })();
     </script>
 </body>
 </html>
